@@ -1,6 +1,6 @@
 """Regenerate the app screenshots used in README.md.
 
-Run:  python docs/make_screenshots.py      (opens the window, runs both tabs, ~1-2 min)
+Run:  python docs/make_screenshots.py      (opens the window, runs every tab, ~2 min)
 """
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -47,6 +47,14 @@ def go():
     run(w.inlet)
     shot(w.inlet, "Ion energy", "inlet_ion_energy")
     shot(w.inlet, "Gas flow", "inlet_gas_flow")
+    run(w.funnel)
+    shot(w.funnel, "Trajectories", "funnel_trajectories")
+    shot(w.funnel, "Potential", "funnel_potential")
+    w.funnel.kind.setCurrentIndex(2)
+    w.funnel.load_geometry(os.path.join(os.path.dirname(__file__), "..", "examples", "geometry", "ring_funnel_30.step"))
+    w.funnel.ions.set("r0", 3.5)
+    run(w.funnel)
+    shot(w.funnel, "Geometry", "funnel_cad_geometry")
     app.quit()
 
 

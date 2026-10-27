@@ -8,12 +8,13 @@
 
 ![Ion Sim, quadrupole tab](docs/screenshots/quad_trajectories.png)
 
-Ion Sim solves electrode fields on a grid, flies thousands of ions through them, and checks the results against theory. It currently models four devices:
+Ion Sim solves electrode fields on a grid, flies thousands of ions through them, and checks the results against theory. It currently models five devices:
 
 * **Quadrupole mass filter:** four round rods with RF + DC, a Laplace field solve, RK4 ion flight and a Mathieu stability check.
 * **TWAVE traveling-wave ion mobility separation:** stepped electrode boards in 4 Torr gas, with mobility drift and diffusion.
 * **FAIMS:** an asymmetric waveform across a planar gap at 1 atm, field-dependent mobility α(E/N), CV spectra and dispersion plots.
 * **ESI inlet capillary:** spray region, choked capillary flow and free-jet expansion, with ion velocity and kinetic energy from the emitter to the skimmer.
+* **Ion funnel:** the PNNL stacked-ring funnel, a planar two-board funnel, or **your own electrodes imported from STEP, STL or OBJ**, with RF + DC fields and ion flight through 1–10 Torr gas.
 
 ---
 
@@ -40,7 +41,7 @@ pip install -r requirements.txt
 python ion_sim_app.py              # launches the Ion Sim window
 ```
 
-Requires Python 3.12 or newer. Dependencies: NumPy, SciPy, Matplotlib and PySide6.
+Requires Python 3.12 or newer. Dependencies: NumPy, SciPy, Matplotlib, PySide6, and for the ion funnel PyAMG (3D field solver), trimesh (STL/OBJ) and gmsh (STEP/IGES).
 
 ### Standalone app (no Python needed)
 
@@ -90,6 +91,27 @@ Spray region (emitter distance, tip radius, spray voltage, where ions leave the 
 |---|---|
 | ![Inlet ion energy](docs/screenshots/inlet_ion_energy.png) | ![Inlet gas flow](docs/screenshots/inlet_gas_flow.png) |
 
+### Ion funnel
+
+Pick the funnel type at the top: **Ring funnel** (stacked PCBs), **Planar funnel** (two boards), or **Imported CAD**. Then set the electrics (RF amplitude and frequency, DC gradient, exit plate), gas (pressure, temperature, axial gas speed) and ions (m/z, charge, K0, start radius). It runs either trajectories for one m/z or transmission against m/z. Plot tabs: Geometry, Potential (DC and RF effective potential), Trajectories, Transmission and Exit beam. While the geometry stays the same, the solver is kept, so changing only voltages re-runs in about a second.
+
+| Ring funnel trajectories | DC and RF effective potential |
+|---|---|
+| ![Funnel trajectories](docs/screenshots/funnel_trajectories.png) | ![Funnel potential](docs/screenshots/funnel_potential.png) |
+
+**Importing your own funnel (STEP, STL or OBJ):**
+
+1. Choose **Imported CAD** and press **Load STEP / STL / OBJ...**. Every solid body in the file becomes one electrode, named from the file.
+2. Say which CAD axis the ions travel along (they enter at its low end). For STL/OBJ, also give the units, because those formats don't store them.
+3. The table fills with a standard funnel pattern: bodies sorted along the axis, RF alternating 0°/180°, and a DC ladder from the Electrics box. Tick **Last body is a DC exit plate** if it is. Then edit any DC, RF amplitude or phase by hand. Guards, lenses and grounded parts are just rows with RF set to 0.
+4. Check the **Geometry** tab (true cross-sections through the start point), set the start point and detector plane, and pick a grid spacing about a third of your smallest electrode gap. The label shows the grid size, and the limit is 40 M nodes.
+
+`examples/geometry/ring_funnel_30.step` is a ready-made 30-ring funnel to try.
+
+| Imported STEP file |
+|---|
+| ![Imported STEP funnel](docs/screenshots/funnel_cad_geometry.png) |
+
 <sub>To refresh these screenshots after changing the GUI, run `python docs/make_screenshots.py`.</sub>
 
 ---
@@ -103,6 +125,7 @@ python examples/quad_demo.py       # ~1 min, writes PNGs 1-4 to out/
 python examples/twave_demo.py      # a few min, writes PNGs 5-8 to out/
 python examples/faims_demo.py      # ~40 s, writes PNGs 9-11 to out/
 python examples/inlet_demo.py      # seconds, writes PNGs 12-14 to out/
+python examples/funnel_demo.py     # ~2 min, writes PNGs 15-18 to out/ and the example STEP file
 ```
 
 ### Quadrupole mass filter
@@ -140,6 +163,15 @@ python examples/inlet_demo.py      # seconds, writes PNGs 12-14 to out/
 | **Gas.** Room air drawn in, Fanno flow down a 0.5 mm × 60 mm capillary at 275 °C (choked at the exit, 203 Torr), then the free jet. | **Ion velocity.** Ions ride the gas through the capillary, then reach the jet speed (left) or overshoot it with 30 V to the skimmer (right). |
 | ![Energy](out/14_inlet_energy.png) | |
 | **Ion energy.** Kinetic energy grows with mass in the jet, and the skimmer voltage adds to it. | |
+
+### Ion funnel
+
+| | |
+|---|---|
+| ![Ring funnel](out/15_funnel_trajectories.png) | ![Funnel transmission](out/16_funnel_transmission.png) |
+| **Ring funnel.** 100 rings tapering from 25.4 to 2.5 mm, 100 Vpp at 1 MHz, 20 V/cm, 2 Torr. Ions entering across 16 mm leave in a 0.23 mm (rms) beam, 1.3 ms later. | **Transmission against m/z.** Low RF (30 Vpp) loses heavy ions onto the tapering rings (weak confinement). High RF (300 Vpp) traps mid-mass ions on axis at the small last rings, where the RF makes an axial barrier. At 100 Vpp everything from m/z 35 to 5000 gets through. |
+| ![Planar funnel](out/17_funnel_planar.png) | ![CAD check](out/18_funnel_cad_check.png) |
+| **Planar funnel.** Two boards 4 mm apart, RF strips shortening from 20 to 2 mm, +3 V DC guards beyond the strip ends. Top: the board face (x); bottom: across the gap (y). | **CAD import check.** A 30-ring funnel written to STEP, imported and solved in 3D, against the exact axisymmetric solve of the same rings: same fields, same transmission. |
 
 ---
 
@@ -180,6 +212,15 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * **Free jet:** Ashkenas–Sherman centreline Mach number for an under-expanded sonic jet, up to the Mach disk at 0.67·D·√(P0/Pb).
 * **Ions:** dv/dt = (u_gas − v)/τ + (q/m)E with τ = mK/q and K scaled with gas density. An exponential step keeps this stable from about 1 ns at 1 atm to the slow relaxation in the jet. A hard-sphere correction stops the drift growing linearly at high E/N. The outputs are speed, kinetic energy and the Wannier effective temperature, T_eff = T + M_gas (v − u)²/3k.
 
+### Ion funnel (`ionsim/funnel.py`)
+
+* **Geometry:** `RingFunnel` (stacked rings, constant ID first and then a linear taper, with an exit plate), `PlanarFunnel` (two boards of strips across the ion path, DC guards beyond the strip ends, an exit slit), or `CadFunnel` (any bodies from `ionsim/cad.py`).
+* **Electrics:** each electrode gets a DC voltage, an RF amplitude and an RF phase. Laplace is linear, so three solves (DC, cos and sin parts, `ionsim/laplace.py`) give the field at any time for any number of electrodes. Alternating 0°/180° RF needs only two.
+* **Fields:** rings are solved on an axisymmetric r–z grid (`ionsim/axisym.py`, finite volumes with face-radius weights, exact symmetry). Everything else uses a 3D voxel grid (`ionsim/grid3d.py`). Both use an algebraic multigrid solver (PyAMG): 1 M nodes take about 1–2 s, 8 M about 10 s. The entrance face is open (zero normal field), as if an inlet sat in front, rather than a grounded wall.
+* **CAD import (`ionsim/cad.py`):** STEP/IGES/BREP are read with gmsh (OpenCASCADE) and meshed. STL/OBJ/PLY are read with trimesh, plus a small OBJ reader that keeps named objects. Meshes are voxelised by ray parity along z (fills closed solids, holes included). A surface shell sampled at h/2 is added only where a part is too thin to fill, so 35 µm PCB copper still becomes electrode.
+* **Ion motion (`ionsim/gasflight.py`):** Langevin dynamics. The field, a drag that relaxes the velocity to the gas velocity with τ = mK/q, and thermal kicks. Over each step the Ornstein–Uhlenbeck equations are integrated exactly, with correlated position and velocity noise. That stays stable and correct both when τ is longer than the RF period (RF inertia, the effective potential) and when it is far shorter (pure mobility drift).
+* **Effective potential (plots):** U = q⟨E²⟩ / (2m(ω² + 1/τ²)), the RF pseudopotential reduced by gas damping.
+
 ### Default parameters
 
 | Quadrupole (`examples/quad_demo.py`) | TWAVE (`examples/twave_demo.py`) |
@@ -195,6 +236,13 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 | 4000 V bisinusoidal at 750 kHz (87 Td) | capillary 0.5 mm × 60 mm at 275 °C |
 | N₂ at 760 Torr, 300 K | 1.5 Torr first stage, skimmer 3 mm away at 30 V |
 | example type A / B / C species | m/z 200 (1+), 500 (1+), 1500 (3+) |
+
+| Ring funnel (`examples/funnel_demo.py`) | Planar funnel |
+|---|---|
+| 100 rings, 1 mm pitch, 0.5 mm thick, 45 mm plates | 60 strips per board, 1 mm pitch, 0.5 mm wide |
+| ID 25.4 mm (10 rings) tapering to 2.5 mm, 2.5 mm exit orifice | boards 4 mm apart, strips 20 → 2 mm, 2 × 3 mm exit slit |
+| 100 Vpp at 1 MHz, 20 V/cm, last ring 20 V, exit plate 15 V | same electrics, guards +3 V above the local strip DC |
+| 2 Torr N₂, 300 K, m/z 500 with K0 = 1.0 cm²/Vs, grid 0.05 mm | grid 0.2 mm (1.2 M nodes) |
 
 ---
 
@@ -217,6 +265,13 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * Heavy-ion limit: with no field in the jet, a light ion reaches 0.996 of the gas speed, and its energy matches ½·m·u_gas² (0.53 eV for m/z 100). Heavy ions lag the gas (0.95 for m/z 5000).
 * Ion energy at the skimmer grows with mass: 1.05, 2.61 and 22.5 eV for m/z 200, 500 and 1500 (3+) with no field, or 2.7, 5.8 and 47.7 eV with 30 V.
 
+**Ion funnel**
+* Langevin flight in a uniform field: drift speed = K·E within 0.6%, and spread = √(2Dt) within the 2% statistical error. This holds both with time steps 20× shorter than τ and 20× longer.
+* Axisymmetric solver vs the exact coaxial-cylinder potential: 5×10⁻⁶ V error (of 1 V), 0.02% field error.
+* 3D solver and voxeliser vs concentric spheres: potential error 1.1% at a 0.25 mm grid and 0.5% at 0.125 mm (first order, as expected for voxels), and the voxelised sphere volume is within 1%.
+* STEP import end to end: a 30-ring funnel written to STEP, imported, voxelised and solved in 3D matches the exact axisymmetric solve. The DC field agrees within 0.4% mid-funnel and within 2% at the ends (where the 3D box and the cylinder enclosure differ), and the RF field converges with grid spacing (16–17% → 7–9% rms going from 0.2 to 0.1 mm). Transmission at m/z 50–2000 is identical (100%), and transit times agree within 7%.
+* Physics: with 140 Vpp and a 2.0 mm final ID, m/z 500 ions stall on axis between the last two rings. The pseudopotential calculation shows a 1.1 V axial barrier there against a 1.5 V/mm push. That's the known small-ID trapping at funnel exits, and the reason the defaults use 2.5 mm and 100 Vpp.
+
 ---
 
 ## Limits and roadmap
@@ -236,6 +291,12 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 **ESI inlet, not modelled yet**
 * Droplets and desolvation (ions start as bare ions), radial motion and wall losses in the capillary, gas heating along the capillary (the gas is set to the wall temperature at the entrance), and the 3D jet structure off axis.
 * The mobility model is extrapolated into the very low-density jet. Treat jet energies as estimates, best for comparing ions and settings.
+
+**Ion funnel, not modelled yet**
+* Gas flow is a uniform axial speed, not a computed flow field (no jet from the inlet, no jet disrupter).
+* Electrodes sit in vacuum: no PCB dielectric and no surface charging. No space charge.
+* One RF frequency for the whole device (any phases). The exit region is DC only.
+* 3D voxel fields are first order in the grid spacing, and the grid is capped at 40 M nodes, so very fine features in a large part need a coarser compromise or a cut-down model.
 
 **Next: drag-field quadrupole (collision cell).** The integrator already has the three hooks this needs:
 
@@ -261,8 +322,14 @@ ION-SIM/
 │   ├── twave.py            # traveling-wave boards and mobility flight
 │   ├── faims.py            # FAIMS waveform, alpha(E/N), CV scans, dispersion
 │   ├── inlet.py            # ESI spray region, capillary flow, free jet, ion energy
-│   └── gui/                # PySide6 app: quad, twave, faims and inlet tabs, shared widgets
-├── examples/               # quad, twave, faims and inlet demos
+│   ├── funnel.py           # ring, planar and CAD ion funnels, electrics, flight helper
+│   ├── laplace.py          # multigrid Laplace solve and DC/RF electrode drives
+│   ├── axisym.py           # axisymmetric r-z grid and field (ring electrodes)
+│   ├── grid3d.py           # 3D voxel grid, mesh voxeliser and field
+│   ├── cad.py              # STEP / IGES / STL / OBJ import
+│   ├── gasflight.py        # Langevin ion flight through gas
+│   └── gui/                # PySide6 app: one tab per device, shared widgets
+├── examples/               # one demo per device, geometry/ with an example STEP funnel
 ├── out/                    # example plots
 ├── docs/                   # screenshots and the script that makes them
 ├── build.sh, build_windows.bat, ion_sim.spec   # standalone builds
