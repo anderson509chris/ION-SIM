@@ -52,10 +52,11 @@ class AxisymGrid:
 class AxisymField:
     """Field of an AxisymGrid for a set of electrode Drives at RF frequency `freq`."""
 
-    def __init__(self, grid, drives, freq, solver=None):
+    def __init__(self, grid, drives, freq, solver=None, guess=None):
+        """guess: the phi dict of an earlier field on the same grid (warm start)."""
         self.grid, self.freq = grid, freq
         self.solver = solver or grid.solver()
-        self.phi = solve_drives(self.solver, grid.electrode, grid.names, drives)
+        self.phi = solve_drives(self.solver, grid.electrode, grid.names, drives, guess)
         self.parts = list(self.phi)
         comps = []
         for p in self.parts:

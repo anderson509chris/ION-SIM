@@ -13,8 +13,11 @@ a = Analysis(
     ["ion_sim_app.py"],
     pathex=["."],
     binaries=gmsh_libs,
-    hiddenimports=["scipy.sparse.linalg", "matplotlib.backends.backend_qtagg", "gmsh"]
-                  + collect_submodules("pyamg") + collect_submodules("trimesh.exchange"),
+    hiddenimports=["scipy.sparse.linalg", "matplotlib.backends.backend_qtagg", "gmsh", "ezdxf"]
+                  + collect_submodules("pyamg") + collect_submodules("trimesh.exchange")
+                  + collect_submodules("ezdxf.path") + collect_submodules("ezdxf.entities"),
+    datas=[(p, "examples/geometry") for p in glob.glob("examples/geometry/*")
+           if p.endswith((".dxf", ".step", ".ionsim"))],                        # sample files for the Device builder
     excludes=["tkinter", "PyQt5", "PyQt6", "IPython", "pytest"],
 )
 pyz = PYZ(a.pure)

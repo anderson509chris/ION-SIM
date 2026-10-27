@@ -102,6 +102,7 @@ class SimTab(QtWidgets.QWidget):
         self.form_layout = QtWidgets.QVBoxLayout(left)
         scroll = QtWidgets.QScrollArea(); scroll.setWidgetResizable(True); scroll.setWidget(left)
         scroll.setMinimumWidth(330)
+        self.scroll = scroll
 
         self.run_btn = QtWidgets.QPushButton("Run")
         self.stop_btn = QtWidgets.QPushButton("Stop"); self.stop_btn.setEnabled(False)

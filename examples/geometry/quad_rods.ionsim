@@ -1,0 +1,82 @@
+{
+ "kind": "planar2d",
+ "source": "quad_rods.dxf",
+ "units": "mm",
+ "rf_freq": 1000000.0,
+ "twave": {
+  "n_phases": 8,
+  "n_on": 4,
+  "amplitude": 20.0,
+  "speed": 150.0,
+  "pitch": 0.000508
+ },
+ "board_gap": 0.00275,
+ "both_boards": true,
+ "length": 0.2,
+ "open_entrance": true,
+ "electrodes": {
+  "ROD_A 1": {
+   "dc": 81.833,
+   "rf": 572.83,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "fixed"
+  },
+  "ROD_A 2": {
+   "dc": 81.833,
+   "rf": 572.83,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "fixed"
+  },
+  "ROD_B 1": {
+   "dc": -81.833,
+   "rf": 572.83,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "fixed"
+  },
+  "ROD_B 2": {
+   "dc": -81.833,
+   "rf": 572.83,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "fixed"
+  }
+ },
+ "gui": {
+  "units": "mm",
+  "axis": "z",
+  "quality": "Quick",
+  "h_mm": 0.1559,
+  "ions": {
+   "mz": 500.0,
+   "z": 1,
+   "K0": 1.0,
+   "p": 1e-06,
+   "T": 300.0,
+   "u": 0.0,
+   "E": 5.0,
+   "n": 60,
+   "x0": 0.0,
+   "y0": 0.0,
+   "r": 0.3,
+   "z0": 0.0,
+   "z1": 200.0,
+   "dt": 0.0,
+   "tmax": 0.0
+  },
+  "drive": {
+   "freq": 1000.0,
+   "n": 8,
+   "on": 4,
+   "amp": 20.0,
+   "speed": 150.0,
+   "pitch": 0.508
+  },
+  "geo": {
+   "gap": 2.75,
+   "length": 200.0
+  }
+ }
+}

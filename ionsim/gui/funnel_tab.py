@@ -11,12 +11,21 @@ from ..laplace import Drive
 from ..cad import load_bodies, FILE_FILTER, UNITS
 from ..twave import mobility
 from .common import ParamForm, SimTab
+from .electrode_view import ElectrodeView
 
 TYPES = ["Ring funnel (stacked PCBs)", "Planar funnel (two boards)", "Imported CAD (STEP / STL / OBJ)"]
 MODES = ["Trajectories", "Transmission vs m/z"]
 MAX_NODES = 40_000_000
 MM = 1e-3
 
+
+
+def _entrance_bore(bodies, center):
+    """Inner radius (m) of the body nearest the entrance, or None if it blocks the axis."""
+    first = min(bodies, key=lambda b: b[1][:, :, 2].mean())[1].reshape(-1, 3)
+    r = np.hypot(first[:, 0] - center[0], first[:, 1] - center[1])
+    span = np.ptp(first[:, :2], 0).max()
+    return float(r.min()) if r.min() > 0.02 * span else None
 
 class FunnelTab(SimTab):
     def __init__(self, parent=None):
@@ -93,7 +102,7 @@ class FunnelTab(SimTab):
         self.form_layout.addStretch(1)
 
         self.bodies, self.cad_path = None, None
-        self._geo_cache = None        # (key, grid, solver)
+        self._geo_cache = None        # (key, grid, solver, last phi parts for warm starts)
         self.kind.currentIndexChanged.connect(self._kind_changed)
         self.mode.currentIndexChanged.connect(lambda i: self.scan.setVisible(i == 1))
         self.ring.changed.connect(self._preview); self.planar.changed.connect(self._preview)
@@ -117,6 +126,13 @@ class FunnelTab(SimTab):
         self.axis.setToolTip("CAD axis the ions travel along (it becomes z here); ions enter at the low end")
         form.addRow("Mesh file units", self.units); form.addRow("Ion axis in the CAD file", self.axis)
         v.addLayout(form)
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel("Grid quality"))
+        self.quality = QtWidgets.QComboBox(); self.quality.addItems(["Quick", "Detailed", "Custom"])
+        self.quality.setCurrentText("Custom")
+        self.quality.setToolTip("Quick: ~0.4 M nodes (seconds). Detailed: ~4 M nodes (final numbers). Custom: your spacing.")
+        self.quality.currentIndexChanged.connect(self._quality_changed)
+        row.addWidget(self.quality, 1); v.addLayout(row)
         self.cad_grid = ParamForm("Grid and ion path (mm, after the axis swap)", [
             ("h", "Grid spacing", 0.25, 0.02, 5, 3, 0.05, "mm"),
             ("pad", "Space around parts", 3.0, 0.5, 100, 1, 0.5, "mm"),
@@ -133,7 +149,12 @@ class FunnelTab(SimTab):
         self.table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setMinimumHeight(200)
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self.table.itemSelectionChanged.connect(self._repaint_cad)
+        self.table.itemChanged.connect(self._repaint_cad)
         v.addWidget(self.table)
+        v.addWidget(QtWidgets.QLabel("Click a part in the Geometry plot to find its row (Ctrl-click adds)."))
         row = QtWidgets.QHBoxLayout()
         self.last_exit = QtWidgets.QCheckBox("Last body is a DC exit plate"); self.last_exit.setChecked(True)
         auto = QtWidgets.QPushButton("Auto-assign funnel pattern")
@@ -142,6 +163,47 @@ class FunnelTab(SimTab):
         row.addWidget(self.last_exit); row.addWidget(auto)
         v.addLayout(row)
         return box
+
+    def _quality_changed(self, *_):
+        q = self.quality.currentText()
+        self.cad_grid.boxes["h"].setEnabled(q == "Custom")
+        if q != "Custom" and self.bodies:
+            target = {"Quick": 400_000, "Detailed": 4_000_000}[q]
+            lo, hi = CadFunnel(self.bodies).bounds()
+            pad = self.cad_grid.values()["pad"] * MM
+            size = (hi - lo) - 2 * CadFunnel(self.bodies).pad + 2 * pad
+            self.cad_grid.set("h", float((np.prod(size) / target) ** (1 / 3)) / MM)
+
+    def _cad_pick(self, name, additive):
+        rows = [r for r in range(self.table.rowCount()) if self.table.item(r, 0).text() == name]
+        if not rows:
+            return
+        if not additive:
+            self.table.clearSelection()
+        mode = self.table.selectionMode()
+        self.table.setSelectionMode(QtWidgets.QAbstractItemView.MultiSelection)
+        self.table.selectRow(rows[0])
+        self.table.setSelectionMode(mode)
+        self.table.scrollToItem(self.table.item(rows[0], 0))
+
+    def _cad_hover(self, name):
+        if name is None:
+            self.status.setText("Ready")
+            return
+        d = self._cad_drives().get(name)
+        if d is not None:
+            self.status.setText(f"{name}: DC {d.dc:g} V, RF {d.rf:g} V at {d.phase:g}°")
+
+    def _repaint_cad(self, *_):
+        if self.kind.currentIndex() != 2 or not self.bodies or not getattr(self, "cad_view", None):
+            return
+        try:
+            drives = self._cad_drives()
+        except Exception:
+            return
+        sel = {self.table.item(i.row(), 0).text() for i in self.table.selectedIndexes()}
+        self.cad_view.paint({n: d.dc for n, d in drives.items()}, sel)
+        self.plots.draw("Geometry")
 
     def _load_cad(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Load electrode geometry", "", FILE_FILTER)
@@ -165,12 +227,17 @@ class FunnelTab(SimTab):
         lo, hi = pts.min(0) / MM, pts.max(0) / MM
         self.cad_grid.set("x0", (lo[0] + hi[0]) / 2); self.cad_grid.set("y0", (lo[1] + hi[1]) / 2)
         self.cad_grid.set("z0", lo[2] + 0.5); self.cad_grid.set("z1", hi[2] + 0.5)
+        bore = _entrance_bore(bodies, (lo[:2] + hi[:2]) / 2 * MM)
+        if bore:                                     # start ions well inside the first opening
+            self.ions.set("r0", round(0.6 * bore / MM, 2))
         self.table.setRowCount(0)
         for name, _ in bodies:
             r = self.table.rowCount(); self.table.insertRow(r)
             it = QtWidgets.QTableWidgetItem(name); it.setFlags(it.flags() & ~QtCore.Qt.ItemIsEditable)
             self.table.setItem(r, 0, it)
         self._auto_assign()
+        if self.quality.currentText() != "Custom":
+            self._quality_changed()
         self.log(f"Loaded {os.path.basename(path)}: {len(bodies)} bodies, extent "
                  f"x {lo[0]:.2f}..{hi[0]:.2f}, y {lo[1]:.2f}..{hi[1]:.2f}, z {lo[2]:.2f}..{hi[2]:.2f} mm")
         self._cad_info(); self._preview()
@@ -267,13 +334,23 @@ class FunnelTab(SimTab):
             ax1.set_title("Board face: RF strips (orange), DC guards (blue), exit plate (grey)")
         else:
             ax1, ax2 = fig.subplots(1, 2, sharey=True)
-            cmap = matplotlib.colormaps["tab20"]
             c = self.cad_grid.values()
+            if getattr(self, "cad_view", None) is None:
+                self.cad_view = ElectrodeView(fig.canvas, self._cad_pick, self._cad_hover)
+            self.cad_view.reset()
             for i, (name, t) in enumerate(geo.bodies):
                 for ax, cut, keep, at in ((ax1, 1, 0, c["y0"]), (ax2, 0, 1, c["x0"])):
                     seg = _mesh_section(t / MM, cut, keep, at)
                     if len(seg):
-                        ax.add_collection(LineCollection(seg, colors=[cmap(i % 20)], lw=1.2))
+                        lc = LineCollection(seg, lw=1.3)
+                        ax.add_collection(lc)
+                        self.cad_view.add(name, lc)
+            try:
+                drives = self._cad_drives()
+                sm = self.cad_view.paint({n: d.dc for n, d in drives.items()})
+                fig.colorbar(sm, ax=ax2, label="DC voltage (V)")
+            except Exception:
+                pass
             lo = np.min([t.reshape(-1, 3).min(0) for _, t in geo.bodies], axis=0) / MM
             hi = np.max([t.reshape(-1, 3).max(0) for _, t in geo.bodies], axis=0) / MM
             ax1.set_xlim(lo[0] - 1, hi[0] + 1); ax2.set_xlim(lo[1] - 1, hi[1] + 1)
@@ -316,13 +393,14 @@ class FunnelTab(SimTab):
         def job(progress):
             import time
             t0 = time.time()
+            guess = None
             if cache:
-                grid, solver = cache[1], cache[2]
+                grid, solver, guess = cache[1], cache[2], cache[3]
             else:
                 progress(0.0)
                 grid = geo.build()
                 solver = grid.solver()
-            fld = geo.field(drives, el.freq, grid, solver) if k == 2 else geo.field(el, grid, solver)
+            fld = geo.field(drives, el.freq, grid, solver, guess) if k == 2 else geo.field(el, grid, solver, guess)
             t_solve = time.time() - t0
             res, mzi = run_funnel(fld, z0, z1, mz, K0, n, gs["p"], gs["T"], int(io["z"]), io["r0"] * MM, start,
                                   int(io["steps"]), io["tmax"] * 1e-3 or None, el.gradient, gs["u"], rec,
@@ -335,7 +413,7 @@ class FunnelTab(SimTab):
         self.start(job, self._show, "Flying ions..." if cache else "Solving fields...")
 
     def _show(self, out):
-        self._geo_cache = (out["key"], out["grid"], out["solver"])
+        self._geo_cache = (out["key"], out["grid"], out["solver"], out["field"].phi)
         res, mzi, el = out["res"], out["mzi"], out["el"]
         g = out["grid"]
         what = "reused solver" if out["cached"] else f"{g.nodes / 1e6:.2f} M nodes"

@@ -30,7 +30,21 @@ def load_bodies(path, units="mm", axis="z"):
     else:
         raise ValueError(f"Unsupported file type {ext}")
     perm = {"x": [1, 2, 0], "y": [2, 0, 1], "z": [0, 1, 2]}[axis]
-    return [(name, tris[:, :, perm] * scale) for name, tris in bodies if len(tris)]
+    out = [(name, tris[:, :, perm] * scale) for name, tris in bodies if len(tris)]
+    return _number_unnamed(out)
+
+
+def _number_unnamed(bodies):
+    """Bodies the file left unnamed ("solid 7") are renumbered in order along the ion
+    axis, so "solid 1" is the first part the ions meet. Named parts keep their names."""
+    import re
+    unnamed = [k for k, (n, _) in enumerate(bodies) if re.fullmatch(r"(solid|surface) \d+( \(\d+\))?", n)]
+    order = sorted(unnamed, key=lambda k: float(bodies[k][1][:, :, 2].mean()))
+    out = list(bodies)
+    for rank, k in enumerate(order, start=1):
+        kind = bodies[k][0].split()[0]
+        out[k] = (f"{kind} {rank}", bodies[k][1])
+    return out
 
 
 def _load_occ(path):
@@ -144,8 +158,14 @@ def write_ring_stack_step(path, rings):
             (dim, tag), = occ.cut([(3, outer)], [(3, inner)])[0]
             tags.append((name, tag))
         occ.synchronize()
-        for name, tag in tags:
-            gmsh.model.setEntityName(3, tag, name)
         gmsh.write(path)
     finally:
         gmsh.finalize()
+    # gmsh does not write part names; put them into the STEP PRODUCT entries (one per
+    # solid, in order) so CAD tools and load_bodies show "ring 1", "ring 2", ...
+    import re
+    text = open(path).read()
+    names = iter([name for name, _ in tags])
+    text = re.sub(r"PRODUCT\('Open CASCADE STEP translator [\d.]+ 1\.\d+',\s*'Open CASCADE STEP translator [\d.]+ 1\.\d+'",
+                  lambda m: "PRODUCT('{0}','{0}'".format(next(names, "part")), text)
+    open(path, "w").write(text)

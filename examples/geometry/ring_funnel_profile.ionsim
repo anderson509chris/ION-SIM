@@ -1,0 +1,271 @@
+{
+ "kind": "axisym",
+ "source": "ring_funnel_profile.dxf",
+ "units": "mm",
+ "rf_freq": 1000000.0,
+ "twave": {
+  "n_phases": 8,
+  "n_on": 4,
+  "amplitude": 20.0,
+  "speed": 150.0,
+  "pitch": 0.000508
+ },
+ "board_gap": 0.00275,
+ "both_boards": true,
+ "length": 0.1,
+ "open_entrance": true,
+ "electrodes": {
+  "EXIT 1": {
+   "dc": 15.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "fixed"
+  },
+  "RINGS 1": {
+   "dc": 78.0,
+   "rf": 50.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 2": {
+   "dc": 76.0,
+   "rf": 50.0,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 3": {
+   "dc": 74.0,
+   "rf": 50.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 4": {
+   "dc": 72.0,
+   "rf": 50.0,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 5": {
+   "dc": 70.0,
+   "rf": 50.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 6": {
+   "dc": 68.0,
+   "rf": 50.0,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 7": {
+   "dc": 66.0,
+   "rf": 50.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 8": {
+   "dc": 64.0,
+   "rf": 50.0,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 9": {
+   "dc": 62.0,
+   "rf": 50.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 10": {
+   "dc": 60.0,
+   "rf": 50.0,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 11": {
+   "dc": 58.0,
+   "rf": 50.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 12": {
+   "dc": 56.0,
+   "rf": 50.0,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 13": {
+   "dc": 54.0,
+   "rf": 50.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 14": {
+   "dc": 52.0,
+   "rf": 50.0,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 15": {
+   "dc": 50.0,
+   "rf": 50.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 16": {
+   "dc": 48.0,
+   "rf": 50.0,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 17": {
+   "dc": 46.0,
+   "rf": 50.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 18": {
+   "dc": 44.0,
+   "rf": 50.0,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 19": {
+   "dc": 42.0,
+   "rf": 50.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 20": {
+   "dc": 40.0,
+   "rf": 50.0,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 21": {
+   "dc": 38.00000000000001,
+   "rf": 50.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 22": {
+   "dc": 36.0,
+   "rf": 50.0,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 23": {
+   "dc": 33.99999999999999,
+   "rf": 50.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 24": {
+   "dc": 32.00000000000001,
+   "rf": 50.0,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 25": {
+   "dc": 30.0,
+   "rf": 50.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 26": {
+   "dc": 28.0,
+   "rf": 50.0,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 27": {
+   "dc": 26.0,
+   "rf": 50.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 28": {
+   "dc": 24.0,
+   "rf": 50.0,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 29": {
+   "dc": 22.000000000000007,
+   "rf": 50.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "gradient"
+  },
+  "RINGS 30": {
+   "dc": 20.0,
+   "rf": 50.0,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "gradient"
+  }
+ },
+ "gui": {
+  "units": "mm",
+  "axis": "z",
+  "quality": "Quick",
+  "h_mm": 0.1817,
+  "ions": {
+   "mz": 500.0,
+   "z": 1,
+   "K0": 1.0,
+   "p": 4.0,
+   "T": 300.0,
+   "u": 0.0,
+   "E": 0.0,
+   "n": 100,
+   "x0": 0.0,
+   "y0": 0.0,
+   "r": 3.0,
+   "z0": 0.365,
+   "z1": 30.5,
+   "dt": 0.0,
+   "tmax": 0.0
+  },
+  "drive": {
+   "freq": 1000.0,
+   "n": 8,
+   "on": 4,
+   "amp": 20.0,
+   "speed": 150.0,
+   "pitch": 0.508
+  },
+  "geo": {
+   "gap": 2.75,
+   "length": 100.0
+  }
+ }
+}

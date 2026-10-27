@@ -84,7 +84,8 @@ fig.tight_layout(); fig.savefig(f"{OUT}/17_funnel_planar.png", dpi=130)
 # ---- 4. CAD import check: a ring stack written as STEP, imported, solved in 3D ----
 short = RingFunnel(n_rings=30, id_in=12 * MM, id_out=2.5 * MM, n_straight=4, od=20 * MM)
 step = os.path.join(GEO, "ring_funnel_30.step")
-write_ring_stack_step(step, short.rings())
+if not os.path.exists(step):                 # shipped with the repo; only rebuilt if deleted
+    write_ring_stack_step(step, short.rings())
 bodies = load_bodies(step)
 cad = CadFunnel(bodies, h=0.2 * MM)
 t = time.time(); cfld = cad.field(cad.funnel_pattern(el, last_is_exit=True), el.freq)

@@ -9,6 +9,11 @@ Alternating 0/180 deg RF needs only the dc and c solves.
 The grid is built from link weights between neighbouring nodes (finite volumes), so the
 same code solves 3D Cartesian (all weights 1) and axisymmetric r-z grids (weights ~ r).
 Grid faces are either grounded (Dirichlet 0) or open (zero normal field, Neumann).
+
+Two solver back-ends: a sparse direct (LU) factorisation, which makes every later solve a
+cheap back-substitution and is the right choice for 2D / axisymmetric grids, and
+algebraic multigrid (pyamg) for large 3D grids, which can start from the previous
+solution so a voltage change converges in a few iterations.
 """
 import numpy as np
 import scipy.sparse as sp
@@ -50,8 +55,9 @@ class LaplaceSolver:
     """fixed: bool array of Dirichlet nodes. weights[a]: link weights between node k and k+1
     along axis a (that axis one shorter). Out-of-range neighbours are open (Neumann)."""
 
-    def __init__(self, fixed, weights, tol=1e-9):
-        import pyamg
+    DIRECT_LIMIT = 1_500_000      # free nodes up to which "auto" uses LU (2D only)
+
+    def __init__(self, fixed, weights, tol=1e-7, method="auto"):
         self.shape, self.fixed, self.tol = fixed.shape, fixed, tol
         size = fixed.size
         idx = np.full(size, -1, dtype=np.int64)
@@ -79,20 +85,35 @@ class LaplaceSolver:
         rows.append(np.arange(nf)); cols.append(np.arange(nf)); vals.append(diag)
         self.A = sp.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(nf, nf))
         self.nf = nf
-        self.ml = pyamg.smoothed_aggregation_solver(self.A, max_coarse=2000)
+        if method == "auto":
+            method = "direct" if fixed.ndim <= 2 and nf <= self.DIRECT_LIMIT else "amg"
+        self.method = method
+        if method == "direct":
+            import scipy.sparse.linalg as spla
+            self.lu = spla.splu(self.A.tocsc())
+        else:
+            import pyamg
+            self.ml = pyamg.smoothed_aggregation_solver(self.A, max_coarse=2000)
 
-    def solve(self, fixed_values):
-        """fixed_values: array of grid shape, used on fixed nodes. Returns the full potential."""
+    def solve(self, fixed_values, guess=None):
+        """fixed_values: array of grid shape, used on fixed nodes. Returns the full potential.
+        guess: an earlier potential of the same grid; multigrid starts from it (warm start)."""
         fv = fixed_values.ravel()
         b = np.zeros(self.nf)
         for fi, fx, w in self.couplings:
             b += np.bincount(fi, weights=w * fv[fx], minlength=self.nf)
         phi = np.where(self.fixed, fixed_values, 0.0).astype(float)
         if np.any(b):
-            phi[~self.fixed] = self.ml.solve(b, tol=self.tol, maxiter=300, accel="cg")
+            if self.method == "direct":
+                phi[~self.fixed] = self.lu.solve(b)
+            else:
+                x0 = guess[~self.fixed] if guess is not None else None
+                phi[~self.fixed] = self.ml.solve(b, x0=x0, tol=self.tol, maxiter=300, accel="cg")
         return phi
 
 
-def solve_drives(solver, electrode, names, drives):
-    """Potentials for each needed part: {"dc"|"cos"|"sin": phi}."""
-    return {p: solver.solve(v[electrode]) for p, v in drive_parts(names, drives).items()}
+def solve_drives(solver, electrode, names, drives, guess=None):
+    """Potentials for each needed part: {"dc"|"cos"|"sin": phi}.
+    guess: the parts from an earlier solve on the same grid, used as starting points."""
+    guess = guess or {}
+    return {p: solver.solve(v[electrode], guess.get(p)) for p, v in drive_parts(names, drives).items()}

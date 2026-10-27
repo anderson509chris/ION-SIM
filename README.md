@@ -8,13 +8,14 @@
 
 ![Ion Sim, quadrupole tab](docs/screenshots/quad_trajectories.png)
 
-Ion Sim solves electrode fields on a grid, flies thousands of ions through them, and checks the results against theory. It currently models five devices:
+Ion Sim solves electrode fields on a grid, flies thousands of ions through them, and checks the results against theory. It currently models five devices, plus a device builder for your own drawings:
 
 * **Quadrupole mass filter:** four round rods with RF + DC, a Laplace field solve, RK4 ion flight and a Mathieu stability check.
 * **TWAVE traveling-wave ion mobility separation:** stepped electrode boards in 4 Torr gas, with mobility drift and diffusion.
 * **FAIMS:** an asymmetric waveform across a planar gap at 1 atm, field-dependent mobility α(E/N), CV spectra and dispersion plots.
 * **ESI inlet capillary:** spray region, choked capillary flow and free-jet expansion, with ion velocity and kinetic energy from the emitter to the skimmer.
 * **Ion funnel:** the PNNL stacked-ring funnel, a planar two-board funnel, or **your own electrodes imported from STEP, STL or OBJ**, with RF + DC fields and ion flight through 1–10 Torr gas.
+* **Device builder:** load a **DXF** drawing or a **STEP / STL / OBJ** model, click each electrode to see and set its DC, RF and TWAVE phase (colored by voltage), apply a DC gradient or an 8-phase TWAVE pattern across many pads at once, then solve and fly ions. Works for flat boards (TWAVE), ring stacks drawn as a profile, rod sets, and full 3D parts.
 
 ---
 
@@ -41,7 +42,11 @@ pip install -r requirements.txt
 python ion_sim_app.py              # launches the Ion Sim window
 ```
 
-Requires Python 3.12 or newer. Dependencies: NumPy, SciPy, Matplotlib, PySide6, and for the ion funnel PyAMG (3D field solver), trimesh (STL/OBJ) and gmsh (STEP/IGES).
+Requires Python 3.12 or newer. Dependencies: NumPy, SciPy, Matplotlib, PySide6, and for imported geometry PyAMG (3D field solver), ezdxf (DXF), trimesh (STL/OBJ) and gmsh (STEP/IGES).
+
+On Linux, gmsh and Qt need a few system libraries: `sudo apt install libglu1-mesa libxcursor1 libxinerama1 libxft2 libegl1 libxkbcommon0`.
+
+To check an install, run `python tests/smoke_test.py` (about 20 s). It loads the example DXF and STEP files, solves them and flies ions.
 
 ### Standalone app (no Python needed)
 
@@ -111,6 +116,29 @@ Pick the funnel type at the top: **Ring funnel** (stacked PCBs), **Planar funnel
 | Imported STEP file |
 |---|
 | ![Imported STEP funnel](docs/screenshots/funnel_cad_geometry.png) |
+
+### Device builder (DXF / CAD)
+
+The general tab for your own electrodes. Work down the left panel:
+
+1. **Geometry.** Press **Open DXF / STEP / STL…** and pick the file. Under **Read as**, choose *PCB boards* (pads drawn as seen from above, painted on two facing boards a set gap apart, ions travel along the drawing's x), *Axisymmetric half profile* (a half cross-section of rings or lenses: drawing x is the axis, y the radius), *2D cross-section* (rods or plates extruded a set length), or *3D solids* for STEP/STL/OBJ. Units come from the DXF header when it has them.
+2. **Electrodes.** Every closed shape becomes an electrode, named by its layer and position (or by a TEXT label inside it). Click a shape on the **Geometry** plot, or a row in the table, to see and edit its DC, RF and TWAVE phase. Ctrl- or Shift-click selects several. Colors show the DC voltage, and RF electrodes are hatched. You can pick a whole layer at once.
+3. **Patterns** for the selected electrodes: **Fixed** (same voltages), **DC gradient** (start and end voltage along the ion axis, with optional RF alternating 0°/180° pad to pad), **TWAVE phases** (pads numbered 1..N along the axis, pads side by side share a phase, pitch measured from the drawing), **Ground**, **Remove from TWAVE**.
+4. **Electrics:** RF frequency, and the TWAVE amplitude, speed, number of phases (8 by default) and how many are on. The step time is shown.
+5. **Grid:** **Quick** (seconds, for setting up) or **Detailed** (finer, for final numbers), or a custom spacing. **Check geometry on this grid** reports overlapping electrodes, electrodes closer than the grid spacing, parts too thin for the grid, and parts touching the grid edge.
+6. **Ions and gas**, then **Solve and fly**. Changing only voltages re-uses the grid and warm-starts the solve.
+
+**Save setup…** writes a `.ionsim` file (the drawing path plus every voltage and setting). `examples/geometry/` has three ready setups: `twave_board.ionsim` (48 pads, 8-phase TWAVE with RF guards), `ring_funnel_profile.ionsim` (a 20-ring funnel drawn as a DXF profile) and `quad_rods.ionsim` (quadrupole rods). `examples/geometry/make_dxf_examples.py` shows how the DXFs are drawn.
+
+| TWAVE board from DXF | Ions surfing the wave |
+|---|---|
+| ![Device builder TWAVE board](docs/screenshots/device_twave_board.png) | ![Device builder TWAVE trajectories](docs/screenshots/device_twave_trajectories.png) |
+
+| Ring funnel drawn as a DXF profile |
+|---|
+| ![Device builder funnel profile](docs/screenshots/device_funnel_profile.png) |
+
+In the **Ion funnel** tab, imported CAD bodies are also clickable and colored by voltage, and the same Quick / Detailed grid choice is there.
 
 <sub>To refresh these screenshots after changing the GUI, run `python docs/make_screenshots.py`.</sub>
 
@@ -216,10 +244,17 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 
 * **Geometry:** `RingFunnel` (stacked rings, constant ID first and then a linear taper, with an exit plate), `PlanarFunnel` (two boards of strips across the ion path, DC guards beyond the strip ends, an exit slit), or `CadFunnel` (any bodies from `ionsim/cad.py`).
 * **Electrics:** each electrode gets a DC voltage, an RF amplitude and an RF phase. Laplace is linear, so three solves (DC, cos and sin parts, `ionsim/laplace.py`) give the field at any time for any number of electrodes. Alternating 0°/180° RF needs only two.
-* **Fields:** rings are solved on an axisymmetric r–z grid (`ionsim/axisym.py`, finite volumes with face-radius weights, exact symmetry). Everything else uses a 3D voxel grid (`ionsim/grid3d.py`). Both use an algebraic multigrid solver (PyAMG): 1 M nodes take about 1–2 s, 8 M about 10 s. The entrance face is open (zero normal field), as if an inlet sat in front, rather than a grounded wall.
+* **Fields:** rings are solved on an axisymmetric r–z grid (`ionsim/axisym.py`, finite volumes with face-radius weights, exact symmetry). Everything else uses a 3D voxel grid (`ionsim/grid3d.py`). 2D grids are solved by direct sparse LU: the factorization is kept, so a re-solve takes well under a second. 3D grids use algebraic multigrid (PyAMG) at a relative tolerance of 1e-7, warm-started from the previous solution when only voltages change: 1 M nodes take about 1–2 s, 8 M about 10 s. The entrance face is open (zero normal field), as if an inlet sat in front, rather than a grounded wall.
 * **CAD import (`ionsim/cad.py`):** STEP/IGES/BREP are read with gmsh (OpenCASCADE) and meshed. STL/OBJ/PLY are read with trimesh, plus a small OBJ reader that keeps named objects. Meshes are voxelised by ray parity along z (fills closed solids, holes included). A surface shell sampled at h/2 is added only where a part is too thin to fill, so 35 µm PCB copper still becomes electrode.
-* **Ion motion (`ionsim/gasflight.py`):** Langevin dynamics. The field, a drag that relaxes the velocity to the gas velocity with τ = mK/q, and thermal kicks. Over each step the Ornstein–Uhlenbeck equations are integrated exactly, with correlated position and velocity noise. That stays stable and correct both when τ is longer than the RF period (RF inertia, the effective potential) and when it is far shorter (pure mobility drift).
+* **Ion motion (`ionsim/gasflight.py`):** Langevin dynamics. The field (sampled at the middle of each step, which keeps RF motion accurate at 30 steps per cycle even in vacuum), a drag that relaxes the velocity to the gas velocity with τ = mK/q, and thermal kicks. Over each step the Ornstein–Uhlenbeck equations are integrated exactly, with correlated position and velocity noise. That stays stable and correct both when τ is longer than the RF period (RF inertia, the effective potential) and when it is far shorter (pure mobility drift).
 * **Effective potential (plots):** U = q⟨E²⟩ / (2m(ω² + 1/τ²)), the RF pseudopotential reduced by gas damping.
+
+### Device builder (`ionsim/dxf.py`, `ionsim/device.py`)
+
+* **DXF reading:** ezdxf reads polylines, circles, arcs, splines, ellipses, solids and hatches (blocks are exploded). Arcs and curves are flattened to polygons. Loose LINE and ARC pieces are joined end to end into closed loops, and a loop inside another on the same layer becomes a hole. Open lines that never close are reported, not used.
+* **Electrode model:** each electrode has a DC voltage, an RF amplitude and phase, and an optional TWAVE phase number. Laplace is linear, so the field is the sum of one solve for DC, two for RF (cos and sin) and one per TWAVE phase. TWAVE phase k is on while ((k − step) mod N) < n_on, and the step advances every pitch/speed.
+* **Grids:** flat boards and 3D CAD use the 3D voxel grid; profiles use the axisymmetric grid; 2D cross-sections use a planar 2D grid. Interiors are painted first, then outlines, so neighbors never steal each other's nodes.
+* **Flight:** the same Langevin integrator as the funnel. The time step is picked from the RF period, the TWAVE step time and the device length, and flight time from the expected drift.
 
 ### Default parameters
 
@@ -270,7 +305,13 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * Axisymmetric solver vs the exact coaxial-cylinder potential: 5×10⁻⁶ V error (of 1 V), 0.02% field error.
 * 3D solver and voxeliser vs concentric spheres: potential error 1.1% at a 0.25 mm grid and 0.5% at 0.125 mm (first order, as expected for voxels), and the voxelised sphere volume is within 1%.
 * STEP import end to end: a 30-ring funnel written to STEP, imported, voxelised and solved in 3D matches the exact axisymmetric solve. The DC field agrees within 0.4% mid-funnel and within 2% at the ends (where the 3D box and the cylinder enclosure differ), and the RF field converges with grid spacing (16–17% → 7–9% rms going from 0.2 to 0.1 mm). Transmission at m/z 50–2000 is identical (100%), and transit times agree within 7%.
+* Solver speed: the 30-ring STEP funnel at a 0.2 mm grid went from 19.5 s to 2.9 s with the 1e-7 tolerance, and a warm-started re-solve after a voltage change takes 1.5 s, with no visible change in the fields.
 * Physics: with 140 Vpp and a 2.0 mm final ID, m/z 500 ions stall on axis between the last two rings. The pseudopotential calculation shows a 1.1 V axial barrier there against a 1.5 V/mm push. That's the known small-ID trapping at funnel exits, and the reason the defaults use 2.5 mm and 100 Vpp.
+
+**Device builder**
+* Quadrupole rods from a DXF (2D cross-section): 100% transmitted at (a = 0.20, q = 0.70) and 0% at (0.26, 0.70) and (0, 0.95), as the Mathieu diagram says. Before the midpoint field sampling, the gas-flight integrator lost about 60% at the stable point in vacuum at 30 steps per cycle.
+* Ring funnel drawn as a DXF profile (axisymmetric): 100% of m/z 500 transmitted at 2 Torr.
+* TWAVE board from DXF (48 pads, 0.508 mm pitch, 8 phases, 4 on, 20 V, 150 m/s, RF guard strips): 97–98% transmitted, mean ion speed 14.3–14.4 m/s against 13.4 m/s from the sine-wave roll-over theory. The real wave is square rather than sine, so it pushes slightly harder. Quick grid: 0.53 M nodes, 10 field parts solved in 23 s, re-solve after a voltage change 4 s.
 
 ---
 
@@ -292,9 +333,9 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * Droplets and desolvation (ions start as bare ions), radial motion and wall losses in the capillary, gas heating along the capillary (the gas is set to the wall temperature at the entrance), and the 3D jet structure off axis.
 * The mobility model is extrapolated into the very low-density jet. Treat jet energies as estimates, best for comparing ions and settings.
 
-**Ion funnel, not modelled yet**
-* Gas flow is a uniform axial speed, not a computed flow field (no jet from the inlet, no jet disrupter).
-* Electrodes sit in vacuum: no PCB dielectric and no surface charging. No space charge.
+**Ion funnel and device builder, not modelled yet**
+* Gas flow is a uniform axial speed, not a computed flow field (no jet from the inlet, no jet disrupter). Planned: a shared gas-velocity field that ions read anywhere, filled from a CFD export first and then from a built-in laminar solver.
+* Electrodes sit in vacuum: no PCB dielectric and no surface charging. No space charge. Both are planned (dielectric as a permittivity per material in the solve, space charge as a Poisson term from the ion cloud).
 * One RF frequency for the whole device (any phases). The exit region is DC only.
 * 3D voxel fields are first order in the grid spacing, and the grid is capped at 40 M nodes, so very fine features in a large part need a coarser compromise or a cut-down model.
 
@@ -328,8 +369,12 @@ ION-SIM/
 │   ├── grid3d.py           # 3D voxel grid, mesh voxeliser and field
 │   ├── cad.py              # STEP / IGES / STL / OBJ import
 │   ├── gasflight.py        # Langevin ion flight through gas
-│   └── gui/                # PySide6 app: one tab per device, shared widgets
-├── examples/               # one demo per device, geometry/ with an example STEP funnel
+│   ├── dxf.py              # DXF reader: closed shapes, holes, layers, units
+│   ├── device.py           # device builder: electrodes, patterns, grids, solve, flight
+│   └── gui/                # PySide6 app: one tab per device, shared widgets,
+│                           #   device_tab.py and electrode_view.py (clickable electrodes)
+├── examples/               # one demo per device; geometry/ has example STEP, DXF and .ionsim setups
+├── tests/smoke_test.py     # quick end-to-end check of imports, solves and the app window
 ├── out/                    # example plots
 ├── docs/                   # screenshots and the script that makes them
 ├── build.sh, build_windows.bat, ion_sim.spec   # standalone builds

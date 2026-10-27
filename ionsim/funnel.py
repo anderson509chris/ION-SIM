@@ -94,11 +94,11 @@ class RingFunnel:
         d["exit plate"] = Drive(el.dc_exit - el.exit_offset)
         return d
 
-    def field(self, el, grid=None, solver=None):
+    def field(self, el, grid=None, solver=None, guess=None):
         """Solve the fields. Pass the grid and solver from an earlier call to skip the
-        matrix setup when only voltages changed."""
+        matrix setup when only voltages changed (and its phi as guess to warm-start)."""
         g = grid or self.build()
-        return AxisymField(g, self.drives(el), el.freq, solver)
+        return AxisymField(g, self.drives(el), el.freq, solver, guess)
 
 
 @dataclass
@@ -169,9 +169,9 @@ class PlanarFunnel:
         d["exit plate"] = Drive(el.dc_exit - el.exit_offset)
         return d
 
-    def field(self, el, grid=None, solver=None):
+    def field(self, el, grid=None, solver=None, guess=None):
         g = grid or self.build()
-        return GridField3D(g, self.drives(el), el.freq, solver)
+        return GridField3D(g, self.drives(el), el.freq, solver, guess)
 
 
 @dataclass
@@ -213,9 +213,9 @@ class CadFunnel:
             d[order[-1]] = Drive(el.dc_exit - el.exit_offset)
         return d
 
-    def field(self, drives, freq, grid=None, solver=None):
+    def field(self, drives, freq, grid=None, solver=None, guess=None):
         g = grid or self.build()
-        return GridField3D(g, drives, freq, solver)
+        return GridField3D(g, drives, freq, solver, guess)
 
 
 def pseudopotential(e2, mz, charge_state, K, freq):

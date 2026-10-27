@@ -55,6 +55,18 @@ def go():
     w.funnel.ions.set("r0", 3.5)
     run(w.funnel)
     shot(w.funnel, "Geometry", "funnel_cad_geometry")
+    # Device builder: TWAVE board DXF with patterns, then a funnel half profile
+    d = w.device
+    geo = os.path.join(os.path.dirname(__file__), "..", "examples", "geometry")
+    w.tabs.setCurrentWidget(d)
+    d.open_setup_from(os.path.join(geo, "twave_board.ionsim"))
+    d._picked("TW 9", False)
+    shot(d, "Geometry", "device_twave_board")
+    run(d)
+    shot(d, "Trajectories", "device_twave_trajectories")
+    d.open_setup_from(os.path.join(geo, "ring_funnel_profile.ionsim"))
+    run(d)
+    shot(d, "Trajectories", "device_funnel_profile")
     app.quit()
 
 

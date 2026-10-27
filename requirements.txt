@@ -4,4 +4,5 @@ matplotlib
 PySide6!=6.12.0  # 6.12.0 cannot load its macOS platform plugin
 pyamg            # multigrid field solver (ion funnel)
 trimesh           # STL / OBJ import
-gmsh              # STEP / IGES import
+gmsh              # STEP / IGES import (Linux also needs the system package libglu1-mesa)
+ezdxf             # DXF import (Device builder)

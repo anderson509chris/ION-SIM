@@ -9,7 +9,9 @@ Ornstein-Uhlenbeck equations are integrated exactly:
     v' = u + a tau + w c                  + noise_v
     x' = x + (u + a tau) dt + w tau (1-c) + noise_x
 
-with the exact correlated Gaussian noise. The step is stable for any dt/tau, so the
+with the exact correlated Gaussian noise. E is sampled at the middle of the step (time
+and predicted position), which keeps RF motion accurate when damping is weak. The step
+is stable for any dt/tau, so the
 same code covers RF inertia (tau ~ RF period: funnels at a few Torr) and the
 overdamped mobility limit (tau << dt), where it reduces to dx = K E dt + sqrt(2 D dt) N.
 
@@ -93,7 +95,9 @@ def fly(field, ions, dt, t_max, z_end, temp_k=300.0, gas_velocity=0.0, record=0,
         s = np.nonzero(status == 0)[0]
         if len(s):
             p, v = pos[s], vel[s]
-            atau = (qm[s] * tau[s])[:, None] * field.efield(t, p)
+            # field sampled at the step midpoint (time and predicted position): second order
+            # when gas damping is weak (vacuum-like RF devices), unchanged when overdamped
+            atau = (qm[s] * tau[s])[:, None] * field.efield(t + 0.5 * dt, p + (0.5 * dt) * v)
             w = v - u - atau
             x1, x2 = rng.standard_normal((len(s), 3)), rng.standard_normal((len(s), 3))
             pos[s] = p + (u + atau) * dt + w * (tau[s] * one_c[s])[:, None] + kx1[s, None] * x1 + kx2[s, None] * x2

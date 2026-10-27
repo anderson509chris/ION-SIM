@@ -8,6 +8,7 @@ from .twave_tab import TwaveTab
 from .faims_tab import FaimsTab
 from .inlet_tab import InletTab
 from .funnel_tab import FunnelTab
+from .device_tab import DeviceTab
 
 APP_NAME = "Ion Sim"
 VERSION = "0.1"
@@ -19,12 +20,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle(f"{APP_NAME} {VERSION}")
         self.resize(1400, 900)
         self.tabs = QtWidgets.QTabWidget()
-        self.quad = QuadTab(); self.twave = TwaveTab(); self.faims = FaimsTab(); self.inlet = InletTab(); self.funnel = FunnelTab()
+        self.quad = QuadTab(); self.twave = TwaveTab(); self.faims = FaimsTab(); self.inlet = InletTab(); self.funnel = FunnelTab(); self.device = DeviceTab()
         self.tabs.addTab(self.quad, "Quadrupole mass filter")
         self.tabs.addTab(self.twave, "TWAVE traveling wave")
         self.tabs.addTab(self.faims, "FAIMS")
         self.tabs.addTab(self.inlet, "ESI inlet capillary")
         self.tabs.addTab(self.funnel, "Ion funnel")
+        self.tabs.addTab(self.device, "Device builder (DXF / CAD)")
         self.setCentralWidget(self.tabs)
 
         m = self.menuBar().addMenu("&File")
@@ -66,7 +68,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "Funnel: ring, planar or imported CAD electrodes, RF + DC fields, Langevin ion flight in gas.</p>")
 
     def closeEvent(self, e):
-        for tab in (self.quad, self.twave, self.faims, self.inlet, self.funnel):
+        for tab in (self.quad, self.twave, self.faims, self.inlet, self.funnel, self.device):
             tab.stop()
             if tab._thread is not None:
                 tab._thread.quit(); tab._thread.wait(3000)
