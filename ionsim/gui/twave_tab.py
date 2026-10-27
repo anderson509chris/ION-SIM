@@ -4,13 +4,14 @@ from PySide6 import QtWidgets
 
 from ..twave import TWBoards, mobility, fly_mobility, mean_velocity_sine, fwhm
 from .common import ParamForm, SimTab
+from .heating_view import HeatingBox, draw_heating
 
 MODES = ["Separation", "Wave-speed sweep", "Velocity vs theory"]
 
 
 class TwaveTab(SimTab):
     def __init__(self, parent=None):
-        super().__init__(["TW field", "Arrival times", "Ion velocity", "Speed sweep"], parent)
+        super().__init__(["TW field", "Arrival times", "Ion velocity", "Speed sweep", "Heating"], parent)
         self.boards = ParamForm("Boards", [
             ("pitch", "Electrode pitch", 0.508, 0.01, 10, 3, 0.01, "mm"),
             ("width", "Electrode width", 0.432, 0.01, 10, 3, 0.01, "mm"),
@@ -33,6 +34,7 @@ class TwaveTab(SimTab):
             ("path", "Path length", 1.0, 0.01, 100, 3, 0.1, "m"),
             ("dt", "Time step", 0.1, 0.001, 10, 3, 0.01, "us"),
             ("z", "Charge state", 1, 1, 100, 0, 1, ""),
+            ("mz", "m/z (for ion heating)", 500, 1, 1e6, 1, 10, ""),
         ])
         self.k0 = QtWidgets.QLineEdit("1.00, 1.03")
         self.k0.setToolTip("Reduced mobilities K0 in cm^2/Vs, comma separated - one per species")
@@ -45,7 +47,10 @@ class TwaveTab(SimTab):
             ("s1", "To", 300, 1, 5000, 0, 10, "m/s"),
             ("ns", "Points", 8, 2, 100, 0, 1, ""),
         ])
-        for w in (self.boards, self.wave, self.gas, self.ions, mode_box, self.sweep):
+        self.heat = HeatingBox()
+        self.heat.setToolTip("Tracks each ion's effective temperature from its drift K·E through the gas, "
+                             "and its internal temperature (Separation mode)")
+        for w in (self.boards, self.wave, self.gas, self.ions, self.heat, mode_box, self.sweep):
             self.form_layout.addWidget(w)
         self.form_layout.addStretch(1)
         self.mode.currentIndexChanged.connect(lambda i: self.sweep.setVisible(i == 1))
@@ -95,19 +100,26 @@ class TwaveTab(SimTab):
         g, io, sw, mode = self.gas.values(), self.ions.values(), self.sweep.values(), self.mode.currentIndex()
         n, path, dt, zc = int(io["n"]), io["path"], io["dt"] * 1e-6, int(io["z"])
         Ks = [mobility(k, g["p"], g["T"]) for k in k0s]
+        heat_model, mz = self.heat.model(), io["mz"]
 
-        def separate(tw, path, n, progress):
+        def separate(tw, path, n, progress, heating=None):
             K = np.repeat(Ks, n)
             species = np.repeat(np.arange(len(Ks)), n)
             z0 = np.random.default_rng().random(len(K)) * tw.wavelength
             v_slow = max(float(mean_velocity_sine(min(Ks) * tw.e_max, tw.speed)), 0.02 * tw.speed)
-            r = fly_mobility(tw, K, z0, path, dt, 3 * path / v_slow, g["T"], zc, species, progress=progress)
-            return [r.arrival[species == s] for s in range(len(Ks))]
+            r = fly_mobility(tw, K, z0, path, dt, 3 * path / v_slow, g["T"], zc, species, progress=progress,
+                             heating=heating, mz=mz)
+            arr = [r.arrival[species == s] for s in range(len(Ks))]
+            return (arr, r.heat, species) if heating is not None else arr
 
         def job(progress):
             out = {"mode": mode, "k0s": k0s, "Ks": Ks, "tw": tw, "path": path}
             if mode == 0:
-                out["t"] = separate(tw, path, n, progress)
+                if heat_model is not None:
+                    out["t"], out["heat"], out["species"] = separate(tw, path, n, progress, heat_model)
+                else:
+                    out["t"] = separate(tw, path, n, progress)
+                out["mz"] = mz
             elif mode == 1:
                 speeds = np.linspace(sw["s0"], sw["s1"], int(sw["ns"]))
                 out["speeds"], out["sweep"] = speeds, []
@@ -168,6 +180,14 @@ class TwaveTab(SimTab):
                          (f", Rpp = {', '.join(f'{r:.2f}' for r in rpp)}" if rpp else ""))
             self.plots.draw("Arrival times")
             self._draw_velocity(out, None)
+            h = out.get("heat")
+            if h is not None:
+                for s, k0 in enumerate(k0s):
+                    self.log(f"  Heating K0 {k0}: " + h.summary(out["species"] == s))
+            draw_heating(self.plots.figs["Heating"], h,
+                         title=f"m/z {out['mz']:g}, {out['tw'].amplitude:.0f} V at {out['tw'].speed:.0f} m/s: "
+                               "ion heating along the path")
+            self.plots.draw("Heating")
         elif mode == 1:
             rows, curves = [], []
             for s, t in zip(out["speeds"], out["sweep"]):

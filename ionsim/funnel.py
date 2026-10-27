@@ -268,11 +268,12 @@ def gas_flow(field, slm, pressure_torr, temp_k=300.0, inlet_radius=5e-3, center=
 
 def run_funnel(field, z_start, z_end, mz, K0, n, pressure_torr, temp_k=300.0, charge_state=1,
                start_radius=5e-3, center=(0.0, 0.0), steps_per_cycle=30, t_max=None, gradient=20.0,
-               gas_velocity=0.0, record=0, rng=None, progress=None, current=0.0, sc_iterations=4):
+               gas_velocity=0.0, record=0, rng=None, progress=None, current=0.0, sc_iterations=4, heating=None):
     """Fly n ions per m/z value. mz and K0 may be scalars or equal-length lists (mass scan).
     gas_velocity: uniform axial speed (m/s) or a GasFlow. current: ion beam current (A); when
     non-zero the beam's space charge is iterated (sc_iterations passes, see spacecharge.py)
-    and the result carries .space_charge and .sc_history.
+    and the result carries .space_charge and .sc_history. heating: a heating.HeatingModel to
+    track ion heating (res.heat).
     Returns (FlightResult, per-ion m/z)."""
     mz = np.atleast_1d(np.asarray(mz, float))
     K0 = np.broadcast_to(np.atleast_1d(np.asarray(K0, float)), mz.shape)
@@ -290,7 +291,7 @@ def run_funnel(field, z_start, z_end, mz, K0, n, pressure_torr, temp_k=300.0, ch
                          temp_k, birth_window=1 / freq, rng=rng)
         return fly(fld, ions, 1 / (freq * steps_per_cycle), t_max, z_end, temp_k, gas_velocity,
                    record=record, record_every=max(1, steps_per_cycle // 3), rng=rng, progress=prog,
-                   dwell=dwell, dwell_every=dwell_every)
+                   dwell=dwell, dwell_every=dwell_every, heating=heating)
 
     if current:
         res, _, _ = fly_with_space_charge(fly_once, field, GridMap.of(field.grid), field.solver, current,

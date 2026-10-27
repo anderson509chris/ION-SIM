@@ -1,0 +1,1126 @@
+{
+ "kind": "boards",
+ "source": "twave_board.dxf",
+ "units": "mm",
+ "rf_freq": 1000000.0,
+ "twave": {
+  "n_phases": 8,
+  "n_on": 4,
+  "amplitude": 20.0,
+  "speed": 150.0,
+  "pitch": 0.000508
+ },
+ "board_gap": 0.00275,
+ "both_boards": true,
+ "length": 0.1,
+ "open_entrance": true,
+ "board_thickness": 0.0016,
+ "board_eps": 4.4,
+ "electrodes": {
+  "GUARD 1": {
+   "dc": 25.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "fixed",
+   "eps": 0.0,
+   "drive": ""
+  },
+  "GUARD 2": {
+   "dc": 25.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "fixed",
+   "eps": 0.0,
+   "drive": ""
+  },
+  "RF 1": {
+   "dc": 0.0,
+   "rf": 150.0,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "fixed",
+   "eps": 0.0,
+   "drive": ""
+  },
+  "RF 2": {
+   "dc": 0.0,
+   "rf": 150.0,
+   "phase": 0.0,
+   "tw": -1,
+   "role": "fixed",
+   "eps": 0.0,
+   "drive": ""
+  },
+  "RF 3": {
+   "dc": 0.0,
+   "rf": 150.0,
+   "phase": 180.0,
+   "tw": -1,
+   "role": "fixed",
+   "eps": 0.0,
+   "drive": ""
+  },
+  "TW 1": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 0,
+   "role": "TWAVE/RF combiner: TW1 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW1 RF+"
+  },
+  "TW 2": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 0,
+   "role": "TWAVE/RF combiner: TW1 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW1 RF-"
+  },
+  "TW 3": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 1,
+   "role": "TWAVE/RF combiner: TW2 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW2 RF+"
+  },
+  "TW 4": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 1,
+   "role": "TWAVE/RF combiner: TW2 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW2 RF-"
+  },
+  "TW 5": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 2,
+   "role": "TWAVE/RF combiner: TW3 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW3 RF+"
+  },
+  "TW 6": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 2,
+   "role": "TWAVE/RF combiner: TW3 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW3 RF-"
+  },
+  "TW 7": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 3,
+   "role": "TWAVE/RF combiner: TW4 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW4 RF+"
+  },
+  "TW 8": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 3,
+   "role": "TWAVE/RF combiner: TW4 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW4 RF-"
+  },
+  "TW 9": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 4,
+   "role": "TWAVE/RF combiner: TW5 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW5 RF+"
+  },
+  "TW 10": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 4,
+   "role": "TWAVE/RF combiner: TW5 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW5 RF-"
+  },
+  "TW 11": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 5,
+   "role": "TWAVE/RF combiner: TW6 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW6 RF+"
+  },
+  "TW 12": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 5,
+   "role": "TWAVE/RF combiner: TW6 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW6 RF-"
+  },
+  "TW 13": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 6,
+   "role": "TWAVE/RF combiner: TW7 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW7 RF+"
+  },
+  "TW 14": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 6,
+   "role": "TWAVE/RF combiner: TW7 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW7 RF-"
+  },
+  "TW 15": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 7,
+   "role": "TWAVE/RF combiner: TW8 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW8 RF+"
+  },
+  "TW 16": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 7,
+   "role": "TWAVE/RF combiner: TW8 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW8 RF-"
+  },
+  "TW 17": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 0,
+   "role": "TWAVE/RF combiner: TW1 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW1 RF+"
+  },
+  "TW 18": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 0,
+   "role": "TWAVE/RF combiner: TW1 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW1 RF-"
+  },
+  "TW 19": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 1,
+   "role": "TWAVE/RF combiner: TW2 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW2 RF+"
+  },
+  "TW 20": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 1,
+   "role": "TWAVE/RF combiner: TW2 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW2 RF-"
+  },
+  "TW 21": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 2,
+   "role": "TWAVE/RF combiner: TW3 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW3 RF+"
+  },
+  "TW 22": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 2,
+   "role": "TWAVE/RF combiner: TW3 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW3 RF-"
+  },
+  "TW 23": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 3,
+   "role": "TWAVE/RF combiner: TW4 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW4 RF+"
+  },
+  "TW 24": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 3,
+   "role": "TWAVE/RF combiner: TW4 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW4 RF-"
+  },
+  "TW 25": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 4,
+   "role": "TWAVE/RF combiner: TW5 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW5 RF+"
+  },
+  "TW 26": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 4,
+   "role": "TWAVE/RF combiner: TW5 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW5 RF-"
+  },
+  "TW 27": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 5,
+   "role": "TWAVE/RF combiner: TW6 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW6 RF+"
+  },
+  "TW 28": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 5,
+   "role": "TWAVE/RF combiner: TW6 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW6 RF-"
+  },
+  "TW 29": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 6,
+   "role": "TWAVE/RF combiner: TW7 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW7 RF+"
+  },
+  "TW 30": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 6,
+   "role": "TWAVE/RF combiner: TW7 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW7 RF-"
+  },
+  "TW 31": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 7,
+   "role": "TWAVE/RF combiner: TW8 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW8 RF+"
+  },
+  "TW 32": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 7,
+   "role": "TWAVE/RF combiner: TW8 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW8 RF-"
+  },
+  "TW 33": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 0,
+   "role": "TWAVE/RF combiner: TW1 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW1 RF+"
+  },
+  "TW 34": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 0,
+   "role": "TWAVE/RF combiner: TW1 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW1 RF-"
+  },
+  "TW 35": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 1,
+   "role": "TWAVE/RF combiner: TW2 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW2 RF+"
+  },
+  "TW 36": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 1,
+   "role": "TWAVE/RF combiner: TW2 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW2 RF-"
+  },
+  "TW 37": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 2,
+   "role": "TWAVE/RF combiner: TW3 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW3 RF+"
+  },
+  "TW 38": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 2,
+   "role": "TWAVE/RF combiner: TW3 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW3 RF-"
+  },
+  "TW 39": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 3,
+   "role": "TWAVE/RF combiner: TW4 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW4 RF+"
+  },
+  "TW 40": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 3,
+   "role": "TWAVE/RF combiner: TW4 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW4 RF-"
+  },
+  "TW 41": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 4,
+   "role": "TWAVE/RF combiner: TW5 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW5 RF+"
+  },
+  "TW 42": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 4,
+   "role": "TWAVE/RF combiner: TW5 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW5 RF-"
+  },
+  "TW 43": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 5,
+   "role": "TWAVE/RF combiner: TW6 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW6 RF+"
+  },
+  "TW 44": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 5,
+   "role": "TWAVE/RF combiner: TW6 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW6 RF-"
+  },
+  "TW 45": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 6,
+   "role": "TWAVE/RF combiner: TW7 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW7 RF+"
+  },
+  "TW 46": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 6,
+   "role": "TWAVE/RF combiner: TW7 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW7 RF-"
+  },
+  "TW 47": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 7,
+   "role": "TWAVE/RF combiner: TW8 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW8 RF+"
+  },
+  "TW 48": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 7,
+   "role": "TWAVE/RF combiner: TW8 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW8 RF-"
+  },
+  "TW 49": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 0,
+   "role": "TWAVE/RF combiner: TW1 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW1 RF+"
+  },
+  "TW 50": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 0,
+   "role": "TWAVE/RF combiner: TW1 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW1 RF-"
+  },
+  "TW 51": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 1,
+   "role": "TWAVE/RF combiner: TW2 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW2 RF+"
+  },
+  "TW 52": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 1,
+   "role": "TWAVE/RF combiner: TW2 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW2 RF-"
+  },
+  "TW 53": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 2,
+   "role": "TWAVE/RF combiner: TW3 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW3 RF+"
+  },
+  "TW 54": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 2,
+   "role": "TWAVE/RF combiner: TW3 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW3 RF-"
+  },
+  "TW 55": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 3,
+   "role": "TWAVE/RF combiner: TW4 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW4 RF+"
+  },
+  "TW 56": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 3,
+   "role": "TWAVE/RF combiner: TW4 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW4 RF-"
+  },
+  "TW 57": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 4,
+   "role": "TWAVE/RF combiner: TW5 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW5 RF+"
+  },
+  "TW 58": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 4,
+   "role": "TWAVE/RF combiner: TW5 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW5 RF-"
+  },
+  "TW 59": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 5,
+   "role": "TWAVE/RF combiner: TW6 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW6 RF+"
+  },
+  "TW 60": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 5,
+   "role": "TWAVE/RF combiner: TW6 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW6 RF-"
+  },
+  "TW 61": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 6,
+   "role": "TWAVE/RF combiner: TW7 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW7 RF+"
+  },
+  "TW 62": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 6,
+   "role": "TWAVE/RF combiner: TW7 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW7 RF-"
+  },
+  "TW 63": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 7,
+   "role": "TWAVE/RF combiner: TW8 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW8 RF+"
+  },
+  "TW 64": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 7,
+   "role": "TWAVE/RF combiner: TW8 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW8 RF-"
+  },
+  "TW 65": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 0,
+   "role": "TWAVE/RF combiner: TW1 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW1 RF+"
+  },
+  "TW 66": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 0,
+   "role": "TWAVE/RF combiner: TW1 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW1 RF-"
+  },
+  "TW 67": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 1,
+   "role": "TWAVE/RF combiner: TW2 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW2 RF+"
+  },
+  "TW 68": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 1,
+   "role": "TWAVE/RF combiner: TW2 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW2 RF-"
+  },
+  "TW 69": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 2,
+   "role": "TWAVE/RF combiner: TW3 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW3 RF+"
+  },
+  "TW 70": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 2,
+   "role": "TWAVE/RF combiner: TW3 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW3 RF-"
+  },
+  "TW 71": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 3,
+   "role": "TWAVE/RF combiner: TW4 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW4 RF+"
+  },
+  "TW 72": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 3,
+   "role": "TWAVE/RF combiner: TW4 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW4 RF-"
+  },
+  "TW 73": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 4,
+   "role": "TWAVE/RF combiner: TW5 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW5 RF+"
+  },
+  "TW 74": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 4,
+   "role": "TWAVE/RF combiner: TW5 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW5 RF-"
+  },
+  "TW 75": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 5,
+   "role": "TWAVE/RF combiner: TW6 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW6 RF+"
+  },
+  "TW 76": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 5,
+   "role": "TWAVE/RF combiner: TW6 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW6 RF-"
+  },
+  "TW 77": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 6,
+   "role": "TWAVE/RF combiner: TW7 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW7 RF+"
+  },
+  "TW 78": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 6,
+   "role": "TWAVE/RF combiner: TW7 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW7 RF-"
+  },
+  "TW 79": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 7,
+   "role": "TWAVE/RF combiner: TW8 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW8 RF+"
+  },
+  "TW 80": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 7,
+   "role": "TWAVE/RF combiner: TW8 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW8 RF-"
+  },
+  "TW 81": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 0,
+   "role": "TWAVE/RF combiner: TW1 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW1 RF+"
+  },
+  "TW 82": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 0,
+   "role": "TWAVE/RF combiner: TW1 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW1 RF-"
+  },
+  "TW 83": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 1,
+   "role": "TWAVE/RF combiner: TW2 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW2 RF+"
+  },
+  "TW 84": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 1,
+   "role": "TWAVE/RF combiner: TW2 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW2 RF-"
+  },
+  "TW 85": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 2,
+   "role": "TWAVE/RF combiner: TW3 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW3 RF+"
+  },
+  "TW 86": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 2,
+   "role": "TWAVE/RF combiner: TW3 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW3 RF-"
+  },
+  "TW 87": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 3,
+   "role": "TWAVE/RF combiner: TW4 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW4 RF+"
+  },
+  "TW 88": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 3,
+   "role": "TWAVE/RF combiner: TW4 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW4 RF-"
+  },
+  "TW 89": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 4,
+   "role": "TWAVE/RF combiner: TW5 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW5 RF+"
+  },
+  "TW 90": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 4,
+   "role": "TWAVE/RF combiner: TW5 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW5 RF-"
+  },
+  "TW 91": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 5,
+   "role": "TWAVE/RF combiner: TW6 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW6 RF+"
+  },
+  "TW 92": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 5,
+   "role": "TWAVE/RF combiner: TW6 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW6 RF-"
+  },
+  "TW 93": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 6,
+   "role": "TWAVE/RF combiner: TW7 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW7 RF+"
+  },
+  "TW 94": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 6,
+   "role": "TWAVE/RF combiner: TW7 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW7 RF-"
+  },
+  "TW 95": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 7,
+   "role": "TWAVE/RF combiner: TW8 RF+",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW8 RF+"
+  },
+  "TW 96": {
+   "dc": 0.0,
+   "rf": 0.0,
+   "phase": 0.0,
+   "tw": 7,
+   "role": "TWAVE/RF combiner: TW8 RF-",
+   "eps": 0.0,
+   "drive": "TWAVE/RF combiner / TW8 RF-"
+  }
+ },
+ "drivers": [
+  {
+   "name": "TWAVE/RF combiner",
+   "rf_freq": 1000000.0,
+   "outputs": [
+    {
+     "name": "TW1 RF+",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 0.0,
+     "tw": 0,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW1 RF-",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 180.0,
+     "tw": 0,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW2 RF+",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 0.0,
+     "tw": 1,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW2 RF-",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 180.0,
+     "tw": 1,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW3 RF+",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 0.0,
+     "tw": 2,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW3 RF-",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 180.0,
+     "tw": 2,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW4 RF+",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 0.0,
+     "tw": 3,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW4 RF-",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 180.0,
+     "tw": 3,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW5 RF+",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 0.0,
+     "tw": 4,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW5 RF-",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 180.0,
+     "tw": 4,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW6 RF+",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 0.0,
+     "tw": 5,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW6 RF-",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 180.0,
+     "tw": 5,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW7 RF+",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 0.0,
+     "tw": 6,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW7 RF-",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 180.0,
+     "tw": 6,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW8 RF+",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 0.0,
+     "tw": 7,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW8 RF-",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 180.0,
+     "tw": 7,
+     "tone_sign": 0.0
+    }
+   ],
+   "tones": [],
+   "tw_phases": 8,
+   "tw_on": 4,
+   "tw_amp": 20.0,
+   "tw_speed": 150.0,
+   "tw_pitch": 0.000508,
+   "tw_rise": 1e-07,
+   "notes": "TWAVE phases 1-8 superimposed on RF+ and RF- (16 outputs)."
+  }
+ ],
+ "gui": {
+  "units": "mm",
+  "axis": "z",
+  "quality": "Quick",
+  "h_mm": 0.1705,
+  "ions": {
+   "mz": 500.0,
+   "z": 1,
+   "K0": 1.0,
+   "p": 4.0,
+   "T": 300.0,
+   "u": 0.0,
+   "E": 0.0,
+   "n": 60,
+   "x0": 0.0,
+   "y0": 0.0,
+   "r": 0.138,
+   "z0": 2.0,
+   "z1": 20.0,
+   "dt": 0.0,
+   "tmax": 0.0
+  },
+  "drive": {
+   "freq": 1000.0,
+   "n": 8,
+   "on": 4,
+   "amp": 20.0,
+   "speed": 150.0,
+   "pitch": 0.508
+  },
+  "geo": {
+   "gap": 2.75,
+   "length": 100.0,
+   "bt": 1.6,
+   "beps": 4.4
+  },
+  "extra": {
+   "slm": 1.0,
+   "r_in": 2.0,
+   "I": 0.0,
+   "it": 4
+  },
+  "flow": 0,
+  "heat": {
+   "on": true,
+   "gas": "N\u2082 (28)",
+   "neq": 10.0,
+   "frag": false,
+   "ea": 1.2,
+   "loga": 12.0
+  }
+ }
+}

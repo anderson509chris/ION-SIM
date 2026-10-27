@@ -1,0 +1,146 @@
+{
+ "drivers": [
+  {
+   "name": "TWAVE/RF combiner",
+   "rf_freq": 1000000.0,
+   "outputs": [
+    {
+     "name": "TW1 RF+",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 0.0,
+     "tw": 0,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW1 RF-",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 180.0,
+     "tw": 0,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW2 RF+",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 0.0,
+     "tw": 1,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW2 RF-",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 180.0,
+     "tw": 1,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW3 RF+",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 0.0,
+     "tw": 2,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW3 RF-",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 180.0,
+     "tw": 2,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW4 RF+",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 0.0,
+     "tw": 3,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW4 RF-",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 180.0,
+     "tw": 3,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW5 RF+",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 0.0,
+     "tw": 4,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW5 RF-",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 180.0,
+     "tw": 4,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW6 RF+",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 0.0,
+     "tw": 5,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW6 RF-",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 180.0,
+     "tw": 5,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW7 RF+",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 0.0,
+     "tw": 6,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW7 RF-",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 180.0,
+     "tw": 6,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW8 RF+",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 0.0,
+     "tw": 7,
+     "tone_sign": 0.0
+    },
+    {
+     "name": "TW8 RF-",
+     "dc": 0.0,
+     "rf": 50.0,
+     "rf_phase": 180.0,
+     "tw": 7,
+     "tone_sign": 0.0
+    }
+   ],
+   "tones": [],
+   "tw_phases": 8,
+   "tw_on": 4,
+   "tw_amp": 20.0,
+   "tw_speed": 150.0,
+   "tw_pitch": 0.000508,
+   "tw_rise": 1e-07,
+   "notes": "TWAVE phases 1-8 superimposed on RF+ and RF- (16 outputs)."
+  }
+ ]
+}

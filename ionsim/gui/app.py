@@ -9,6 +9,7 @@ from .faims_tab import FaimsTab
 from .inlet_tab import InletTab
 from .funnel_tab import FunnelTab
 from .device_tab import DeviceTab
+from .drivers_tab import DriversTab
 
 APP_NAME = "Ion Sim"
 VERSION = "0.1"
@@ -21,12 +22,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resize(1400, 900)
         self.tabs = QtWidgets.QTabWidget()
         self.quad = QuadTab(); self.twave = TwaveTab(); self.faims = FaimsTab(); self.inlet = InletTab(); self.funnel = FunnelTab(); self.device = DeviceTab()
+        self.drivers = DriversTab()
         self.tabs.addTab(self.quad, "Quadrupole mass filter")
         self.tabs.addTab(self.twave, "TWAVE traveling wave")
         self.tabs.addTab(self.faims, "FAIMS")
         self.tabs.addTab(self.inlet, "ESI inlet capillary")
         self.tabs.addTab(self.funnel, "Ion funnel")
         self.tabs.addTab(self.device, "Device builder (DXF / CAD)")
+        self.tabs.addTab(self.drivers, "Drivers")
         self.setCentralWidget(self.tabs)
 
         m = self.menuBar().addMenu("&File")
@@ -65,7 +68,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "TWAVE: traveling-wave field from the electrode boards, mobility drift + diffusion.<br>"
             "FAIMS: asymmetric waveform in a planar gap, field-dependent mobility, CV scans.<br>"
             "Inlet: ESI spray region, choked capillary flow and free jet, ion velocity and energy.<br>"
-            "Funnel: ring, planar or imported CAD electrodes, RF + DC fields, Langevin ion flight in gas.</p>")
+            "Funnel: ring, planar or imported CAD electrodes, RF + DC fields, Langevin ion flight in gas.<br>"
+            "Drivers: the electronics (RF, TWAVE, excitation tones) wired to electrodes in the other tabs.</p>")
 
     def closeEvent(self, e):
         for tab in (self.quad, self.twave, self.faims, self.inlet, self.funnel, self.device):

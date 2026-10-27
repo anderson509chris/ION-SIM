@@ -12,6 +12,7 @@ from ..cad import load_bodies, FILE_FILTER, UNITS
 from ..twave import mobility
 from .common import ParamForm, SimTab
 from .electrode_view import ElectrodeView, INSULATOR
+from .heating_view import HeatingBox, draw_heating
 
 TYPES = ["Ring funnel (stacked PCBs)", "Planar funnel (two boards)", "Imported CAD (STEP / STL / OBJ)"]
 MODES = ["Trajectories", "Transmission vs m/z"]
@@ -30,7 +31,7 @@ def _entrance_bore(bodies, center):
 
 class FunnelTab(SimTab):
     def __init__(self, parent=None):
-        super().__init__(["Geometry", "Potential", "Trajectories", "Transmission", "Exit beam", "Gas flow"], parent)
+        super().__init__(["Geometry", "Potential", "Trajectories", "Transmission", "Exit beam", "Gas flow", "Heating"], parent)
         self.kind = QtWidgets.QComboBox(); self.kind.addItems(TYPES)
         kind_box = QtWidgets.QGroupBox("Funnel type")
         QtWidgets.QVBoxLayout(kind_box).addWidget(self.kind)
@@ -117,7 +118,9 @@ class FunnelTab(SimTab):
             ("per", "Ions per point", 60, 5, 10000, 0, 10, ""),
             ("expo", "K0 ∝ (m/z)^-n, n =", 0.667, 0, 2, 3, 0.05, ""),
         ])
-        for w in (kind_box, self.ring, self.planar, self.cad_box, self.elec, self.gas, self.space, self.ions, mode_box, self.scan):
+        self.heat = HeatingBox()
+        for w in (kind_box, self.ring, self.planar, self.cad_box, self.elec, self.gas, self.space, self.ions, self.heat,
+                  mode_box, self.scan):
             self.form_layout.addWidget(w)
         self.form_layout.addStretch(1)
 
@@ -456,6 +459,7 @@ class FunnelTab(SimTab):
             return
         cache = self._geo_cache if self._geo_cache and self._geo_cache[0] == key else None
         flow_mode, current, sc_it = self.flow.currentIndex(), self.space.values()["I"] * 1e-9, int(self.space.values()["it"])
+        heat_model = self.heat.model()
         r_in = self._inlet_radius(geo, start) if flow_mode == 2 else 0.0
         flow_key = (key, gs["slm"], gs["p"], gs["T"], r_in, start)
         flow_cache = self._flow_cache[1] if flow_mode == 2 and cache and self._flow_cache and self._flow_cache[0] == flow_key else None
@@ -484,7 +488,7 @@ class FunnelTab(SimTab):
             t1 = time.time()
             res, mzi = run_funnel(fld, z0, z1, mz, K0, n, gs["p"], gs["T"], int(io["z"]), io["r0"] * MM, start,
                                   int(io["steps"]), io["tmax"] * 1e-3 or None, el.gradient, gas_u, rec,
-                                  progress=progress, current=current, sc_iterations=sc_it)
+                                  progress=progress, current=current, sc_iterations=sc_it, heating=heat_model)
             return {"key": key, "grid": grid, "solver": solver, "field": fld, "res": res, "mzi": mzi, "mz": mz,
                     "K0": K0, "mode": mode, "t_solve": t_solve, "cached": bool(cache), "start": start, "z": (z0, z1),
                     "gas": gs, "io": io, "el": el, "flow": flow, "flow_key": flow_key, "r_in": r_in,
@@ -527,6 +531,11 @@ class FunnelTab(SimTab):
                         f"{np.sqrt(np.mean(np.sum((res.final_pos[tr, :2] - out['start']) ** 2, 1))) / MM:.3f} mm" if tr.any() else ""))
             self._draw_traj(out)
             self._draw_exit(out)
+            if res.heat is not None:
+                self.log("  Heating (all ions): " + res.heat.summary(st >= 0))
+            draw_heating(self.plots.figs["Heating"], res.heat, st,
+                         title=f"m/z {out['mz'][0]:g} in {out['gas']['p']:g} Torr: ion heating along the funnel")
+            self.plots.draw("Heating")
             self.last_table = (["status(1=out,2=lost,0=flying)", "x_mm", "y_mm", "z_mm", "t_ms"],
                                [[int(s), *(p / MM), t * 1e3] for s, p, t in zip(st, res.final_pos, res.t_end)])
         else:
@@ -543,8 +552,15 @@ class FunnelTab(SimTab):
             ax.set_xlabel("m/z"); ax.set_ylabel("%"); ax.set_ylim(-3, 103); ax.legend(fontsize=8)
             ax.set_title(f"{el.rf:.0f} V RF at {el.freq / 1e3:.0f} kHz, {el.gradient:g} V/cm, {out['gas']['p']:g} Torr")
             self.plots.draw("Transmission")
+            h = res.heat
             for m, t, l in zip(mz, T, L):
-                self.log(f"  m/z {m:8.1f}: transmitted {t:5.0%}, lost {l:5.0%}")
+                extra = ""
+                if h is not None:
+                    sel = mzi == m
+                    extra = f", internal T peak {np.median(h.tint_max[sel]):.0f} K"
+                    if h.model.ea_ev > 0:
+                        extra += f", intact {np.mean(h.survival[sel]):.0%}"
+                self.log(f"  m/z {m:8.1f}: transmitted {t:5.0%}, lost {l:5.0%}{extra}")
             self.last_table = (["mz", "K0", "transmitted", "lost", "trapped"], [list(r) for r in zip(mz, out["K0"], T, L, F)])
 
     def _draw_potential(self, out):

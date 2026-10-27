@@ -18,7 +18,7 @@ Model
 import dataclasses
 import numpy as np
 from dataclasses import dataclass
-from .constants import E_CHARGE, K_B
+from .constants import AMU, E_CHARGE, K_B
 
 
 def mobility(K0_cm2, pressure_torr, temp_k=300.0):
@@ -102,12 +102,15 @@ class MobilityResult:
     species: np.ndarray
     traj_t: np.ndarray = None
     traj_z: np.ndarray = None
+    heat: object = None       # heating.HeatResult when ion heating was tracked
 
 
 def fly_mobility(tw, K, z0, z_end, dt, t_max, temp_k=300.0, charge_state=1,
-                 species=None, record_every=0, rng=None, progress=None):
+                 species=None, record_every=0, rng=None, progress=None, heating=None, mz=500.0):
     """Overdamped Langevin flight of N ions through a TW. K may be per-ion (N,).
-    progress: optional callable(fraction) -> True to stop early (used by the GUI)."""
+    progress: optional callable(fraction) -> True to stop early (used by the GUI).
+    heating: optional heating.HeatingModel (drift velocity K E sets the effective
+    temperature); mz (scalar or per ion) is needed for the collision rate."""
     rng = rng or np.random.default_rng()
     z = np.array(z0, float)
     n = len(z)
@@ -117,10 +120,23 @@ def fly_mobility(tw, K, z0, z_end, dt, t_max, temp_k=300.0, charge_state=1,
     arrival = np.full(n, np.nan)
     alive = np.ones(n, dtype=bool)
     tz, tt = [], []
+    heat = None
+    if heating is not None:
+        from types import SimpleNamespace
+        from .heating import HeatTracker
+        mass = np.broadcast_to(np.asarray(mz, float), (n,)) * charge_state * AMU
+        ions = SimpleNamespace(mass=mass, charge=np.full(n, charge_state * E_CHARGE), K=K.copy(), vel=np.zeros((n, 3)))
+        heat = HeatTracker(heating, ions, temp_k, float(z.min()), z_end, None)
+        zero_c = np.zeros(n)
     t, step = 0.0, 0
     while t < t_max and alive.any():
         a = np.nonzero(alive)[0]
-        z[a] += K[a] * tw.ez(t, z[a]) * dt + sig[a] * rng.standard_normal(len(a))
+        vd = K[a] * tw.ez(t, z[a])
+        z[a] += vd * dt + sig[a] * rng.standard_normal(len(a))
+        if heat is not None and step % 4 == 0:   # overdamped: the driven velocity is K E (sampled every 4 steps)
+            w = np.zeros((len(a), 3)); w[:, 2] = vd
+            pz = np.zeros((len(a), 3)); pz[:, 2] = z[a]
+            heat.step(a, 0.0, w, zero_c[a], 4 * dt, pz)
         t += dt; step += 1
         if progress and step % 500 == 0 and progress(max(t / t_max, 1 - alive.mean())):
             break
@@ -130,6 +146,8 @@ def fly_mobility(tw, K, z0, z_end, dt, t_max, temp_k=300.0, charge_state=1,
         if record_every and step % record_every == 0:
             tz.append(np.where(alive, z, np.nan)); tt.append(t)
     res = MobilityResult(arrival, np.zeros(n, int) if species is None else species)
+    if heat is not None:
+        res.heat = heat.result()
     if record_every:
         res.traj_t, res.traj_z = np.array(tt), np.array(tz)
     return res

@@ -44,6 +44,30 @@ def is_stable(a, q):
     return (np.abs(_trace(a, q)) < 2) & (np.abs(_trace(-a, -q)) < 2)
 
 
+def beta(a, q):
+    """Secular frequency parameter beta (0..1) in the first stability region, NaN outside.
+    From the Floquet trace: cos(pi beta) = trace / 2."""
+    tr = _trace(a, q) / 2
+    return np.where(np.abs(tr) < 1, np.arccos(np.clip(tr, -1, 1)) / np.pi, np.nan)
+
+
+def secular_freqs(U, V, mass_amu, r0, freq, charge_state=1):
+    """Fundamental secular frequencies (f_x, f_y) in Hz: beta * f_rf / 2. NaN where unstable."""
+    a, q = aq(U, V, mass_amu, r0, freq, charge_state)
+    return beta(a, q) * freq / 2, beta(-a, -q) * freq / 2
+
+
+def resonant_mz(f_target, U, V, r0, freq, charge_state=1, axis="x", mz_range=(5, 50000), n=4000):
+    """m/z values whose secular frequency along `axis` equals f_target (Hz). Usually one."""
+    m = np.geomspace(*mz_range, n)
+    fx, fy = secular_freqs(U, V, m, r0, freq, charge_state)
+    f = (fx if axis == "x" else fy) - f_target
+    out = []
+    for i in np.nonzero(np.isfinite(f[:-1]) & np.isfinite(f[1:]) & (np.sign(f[:-1]) != np.sign(f[1:])))[0]:
+        out.append(float(m[i] - f[i] * (m[i + 1] - m[i]) / (f[i + 1] - f[i])))
+    return out
+
+
 def stability_map(q_max=1.0, a_max=0.3, nq=300, na=200):
     q = np.linspace(0, q_max, nq)
     a = np.linspace(0, a_max, na)

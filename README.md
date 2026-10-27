@@ -16,6 +16,8 @@ Ion Sim solves electrode fields on a grid, flies thousands of ions through them,
 * **ESI inlet capillary:** spray region, choked capillary flow and free-jet expansion, with ion velocity and kinetic energy from the emitter to the skimmer.
 * **Ion funnel:** the PNNL stacked-ring funnel (copper rings on FR4 PCBs), a planar two-board funnel, or **your own electrodes imported from STEP, STL or OBJ**, with RF + DC fields and ion flight through 1–10 Torr gas. PCB dielectric, a computed **gas flow field** and the beam's **space charge** are included.
 * **Device builder:** load a **DXF** drawing or a **STEP / STL / OBJ** model, click each electrode to see and set its DC, RF and TWAVE phase (colored by voltage), apply a DC gradient or an 8-phase TWAVE pattern across many pads at once, then solve and fly ions. Works for flat boards (TWAVE), ring stacks drawn as a profile, rod sets, and full 3D parts.
+* **Drivers:** build your electronics once (a TWAVE/RF combiner with 16 outputs, a quad RF supply with 8 excitation tones, an RF pair, DC channels) and wire their outputs to electrodes in the Quadrupole and Device builder tabs. Each output can carry DC, RF, a TWAVE phase with real edge rise times, and any number of excitation tones.
+* **Ion heating:** every gas-phase flight (funnel, Device builder, TWAVE) tracks each ion's effective and internal temperature, the collision energy, where along the device ions get hottest, and optionally how many survive intact (fragmentation / unfolding estimate).
 
 ---
 
@@ -66,7 +68,13 @@ Set the parameters on the left and press **Run**. Runs happen in the background 
 
 ### Quadrupole mass filter
 
-Rod geometry, RF frequency, ion beam and operating point (a, q or U, V, kept in sync). It runs either a single operating point or a full mass scan. Plot tabs: Potential, Trajectories, Cross-section, Stability and Mass scan.
+Rod geometry, RF frequency, ion beam and operating point (a, q or U, V, kept in sync). It runs either a single operating point or a full mass scan. Plot tabs: Potential, Trajectories, Cross-section, Stability, Mass scan and Excitation.
+
+Under **Drive**, pick a driver from the Drivers tab instead of the built-in RF/DC, and choose which output goes on each rod (x+, x−, y+, y−). The tab then works out the excitation type from the tone signs on the rods: tones added with the RF (+ on one pair, − on the other) are quadrupolar and eject at twice the secular frequency; tones across one rod pair are dipolar and eject at the secular frequency. It lists the m/z each tone hits, and **Aim tone k at m/z** sets a tone's frequency for you. **Transmission vs m/z (excitation scan)** flies a log-spaced m/z range (plus every predicted notch) and plots the notches with the tone resonances marked (with 8 tones close together, their notches and weaker side resonances overlap into a broad rejection band, as in the example); the **Excitation** plot shows the secular frequencies against m/z with the tones drawn across them, so crossings are the ejected masses.
+
+| Excitation scan with 8 tones on the RF | Tones against the secular frequencies |
+|---|---|
+| ![Quad excitation scan](docs/screenshots/quad_excitation_scan.png) | ![Quad excitation tones](docs/screenshots/quad_excitation_tones.png) |
 
 | Ion trajectories | Stability diagram |
 |---|---|
@@ -136,8 +144,11 @@ The general tab for your own electrodes. Work down the left panel:
 5. **Grid:** **Quick** (seconds, for setting up) or **Detailed** (finer, for final numbers), or a custom spacing. **Check geometry on this grid** reports overlapping electrodes, electrodes closer than the grid spacing, parts too thin for the grid, and parts touching the grid edge.
 6. **Ions and gas**, then **Solve and fly**. Changing only voltages re-uses the grid and warm-starts the solve.
 7. **Gas flow and space charge:** the same flow field (axisymmetric and 3D devices) and space-charge iteration as the funnel tab.
+8. **Ion heating:** gas, how many collisions the ion's internal temperature needs to follow, and optionally an activation energy and pre-factor for a fragmentation / unfolding estimate. Results are in the **Heating** plot.
 
-**Save setup…** writes a `.ionsim` file (the drawing path plus every voltage and setting). `examples/geometry/` has three ready setups: `twave_board.ionsim` (48 pads, 8-phase TWAVE with RF guards), `ring_funnel_profile.ionsim` (a 20-ring funnel drawn as a DXF profile) and `quad_rods.ionsim` (quadrupole rods). `examples/geometry/make_dxf_examples.py` shows how the DXFs are drawn.
+**Wiring to a driver.** Choose the pattern **Wire to a driver (Drivers tab)**. *All selected to one output* puts the selected electrodes on one output. *TWAVE sequence along the ion axis* numbers the pads 1..N along the path, as the TWAVE pattern does, and puts each on the driver output that carries that phase. Where the driver has RF+ and RF− versions of a phase (the 16-output combiner), they alternate across the path, along it, or RF+ only. Wired electrodes show the driver's values in grey with the output in the **Driver output** column; typing a value over them disconnects them. A saved setup carries a copy of its drivers, so it opens the same on another computer (a driver that differs from yours of the same name comes in as "… (from setup)").
+
+**Save setup…** writes a `.ionsim` file (the drawing path plus every voltage and setting). `examples/geometry/` has four ready setups: `twave_board.ionsim` (48 pads, 8-phase TWAVE with RF guards), `twave_board_combiner.ionsim` (the same board with its pads wired to the 16-output TWAVE/RF combiner), `ring_funnel_profile.ionsim` (a 20-ring funnel drawn as a DXF profile) and `quad_rods.ionsim` (quadrupole rods). `examples/geometry/make_dxf_examples.py` shows how the DXFs are drawn.
 
 | TWAVE board from DXF | Ions surfing the wave |
 |---|---|
@@ -148,6 +159,28 @@ The general tab for your own electrodes. Work down the left panel:
 | ![Device builder funnel profile](docs/screenshots/device_funnel_profile.png) |
 
 In the **Ion funnel** tab, imported CAD bodies are also clickable and colored by voltage, and the same Quick / Detailed grid choice is there.
+
+### Drivers
+
+The electronics, defined once and used everywhere. Start from a template (**TWAVE/RF combiner (16 outputs)**, **Quad RF + 8 tones** on the RF or dipolar on the x rods, **RF pair**, **DC supply**, or empty), then edit:
+
+* **RF and TWAVE timing:** RF frequency; number of TWAVE phases, how many are high at once, amplitude, speed at a reference pitch (the step time is pitch / speed) and the edge rise time.
+* **Outputs:** name, DC, RF amplitude and phase (0 = RF+, 180 = RF−), which TWAVE phase it carries (blank for none), and **Tones ×**: +1, −1 or 0, how the excitation tones are added to that output.
+* **Excitation tones:** frequency, amplitude and phase of each, with an on/off box.
+
+The right side plots the selected outputs' waveforms and the TWAVE gate sequence. Drivers are saved automatically (in `~/.ionsim/drivers.json`) and can be exported and imported as `.iondrv` files; `examples/drivers/` has the combiner and both quad tone drivers. In a device, a driver costs one field solve per distinct component, not per output: the 16-output combiner on the example board needs 10 (DC, RF and 8 TWAVE phases).
+
+| Combiner outputs (TW1/TW2, RF+ and RF−, 100 ns edges) | TWAVE gate sequence |
+|---|---|
+| ![Driver waveforms](docs/screenshots/drivers_waveforms.png) | ![TWAVE sequence](docs/screenshots/drivers_twave_sequence.png) |
+
+### Ion heating
+
+The Ion funnel, Device builder and TWAVE tabs have an **Ion heating** box (on by default). For every ion it reports the effective temperature (how hot the gas collisions are), the internal temperature (which lags by the set number of collisions), the mean centre-of-mass collision energy, collisions per ion and, with an activation energy, the fraction left intact. The **Heating** plot shows the mean and hottest-ion temperatures along the ion axis, where ions fragment, and per-ion peaks.
+
+| Funnel: heating peaks at the exit | TWAVE board with RF on the pads (combiner) |
+|---|---|
+| ![Funnel heating](docs/screenshots/funnel_heating.png) | ![Combiner heating](docs/screenshots/device_combiner_heating.png) |
 
 <sub>To refresh these screenshots after changing the GUI, run `python docs/make_screenshots.py`.</sub>
 
@@ -270,6 +303,20 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * **Grids:** flat boards and 3D CAD use the 3D voxel grid; profiles use the axisymmetric grid; 2D cross-sections use a planar 2D grid. Interiors are painted first, then outlines, so neighbors never steal each other's nodes.
 * **Flight:** the same Langevin integrator as the funnel. The time step is picked from the RF period, the TWAVE step time and the device length, and flight time from the expected drift.
 
+### Drivers (`ionsim/drivers.py`)
+
+* **Waveform:** each output is V(t) = DC + RF cos(2πf t + φ) + (Tones ×) Σ A_k cos(2πf_k t + φ_k) + A_TW · gate_p(t). Phase p's gate is high while ((p − step) mod N) < n_on, the step advances every pitch / speed, and each edge ramps linearly over the rise time.
+* **Field parts:** a device is solved once per distinct component: DC, cos and sin of each frequency in use, and each TWAVE phase of each driver. Outputs that share a component share its solve, so 16 outputs or 8 tones stay cheap. Electrodes not wired to a driver use the device's own RF and TWAVE settings as before.
+* **Quadrupole:** the rods are four separate electrodes, each driven by its output's waveform. For a/q the tab uses U = (DC_x − DC_y)/2 and V = |RF_x − RF_y|/2 (phasors, averaged over each rod pair). Secular frequencies come from the Floquet characteristic exponent β, f = β f_RF / 2, in x from (a, q) and in y from (−a, −q).
+
+### Ion heating (`ionsim/heating.py`)
+
+* **Effective temperature (two-temperature / Wannier theory):** T_eff = T + M_gas w²/3k, where w is the field-driven part of the ion's velocity relative to the gas. It is integrated along each ion's path with the same exact drag step as the flight, minus the thermal noise, so it covers DC drift (w = KE), RF oscillation, TWAVE and launch energy. Mean collision energy (centre of mass) = 3/2 k T_eff.
+* **Collision rate:** ν = NΩ·⟨v_rel⟩, with NΩ from the mobility (Mason–Schamp, so no separate cross section is needed) and ⟨v_rel⟩ at T_eff.
+* **Internal temperature:** dT_int/dt = (T_eff − T_int)·ν / n_eq, with n_eq the collisions the ion needs to equilibrate.
+* **Fragmentation / unfolding estimate:** a first-order Arrhenius rate k = A exp(−Ea / k T_int) integrated along the path; survival = exp(−∫k dt). Where the rate piles up is the shaded "where ions fragment" curve.
+* **TWAVE tab:** overdamped, so w = K E at every step.
+
 ### Default parameters
 
 | Quadrupole (`examples/quad_demo.py`) | TWAVE (`examples/twave_demo.py`) |
@@ -327,6 +374,18 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * PCB rings vs all-metal plates (100 Vpp, m/z 500): both transmit 100%, and transit is 1.33 vs 1.29 ms. The FR4 between the copper rings slightly weakens the axial DC field.
 * Physics: with 140 Vpp and a 2.0 mm final ID, m/z 500 ions stall on axis between the last two rings. The pseudopotential calculation shows a 1.1 V axial barrier there against a 1.5 V/mm push. That's the known small-ID trapping at funnel exits, and the reason the defaults use 2.5 mm and 100 Vpp.
 
+**Drivers**
+* TWAVE gates: 4 of 8 phases high at every step, phase 1 high at step 0 and off at step 1, stepping one phase per step (smoke test).
+* The example TWAVE board with its 96 pads wired to the 16-output combiner (RF off on the pads) transmits 97% at 14.1 m/s, the same as with the board's own TWAVE settings (97%, 14.3 m/s).
+* Quadrupole tone excitation (r0 = 4 mm, 300 V RF at 1 MHz, U = 0, m/z 500 at q = 0.37): a 15 V tone added to the RF at twice the secular frequency (263 kHz) ejects m/z 461–550, with two weaker side resonances near m/z 214 and 271; everything else stable passes at 100%. A 1 V dipolar tone at the secular frequency (131 kHz) ejects m/z 500 when on resonance and lets it through 3% off resonance, the expected narrow dipolar line.
+
+**Ion heating**
+* DC drift field (4 Torr N₂, m/z 500, K0 = 1): T_eff 301.9 K vs 302.0 K from theory at 20 V/cm, and 494 K vs 496 K at 200 V/cm.
+* Uniform RF field (2 Torr, 50 V/cm, 1 MHz, ωτ = 1.4): time-averaged T_eff 308.53 K vs 308.59 K from the damped-oscillator result.
+* Arrhenius check: survival 4.8% against exp(−k t) = 4.5% at the final internal temperature (the estimate must sit a little above, since T_int starts cold).
+* Collision rate for m/z 500, K0 = 1 at 4 Torr: 1.3 × 10⁸ /s.
+* Ring funnel defaults (100 Vpp, 2 Torr): ions stay within 10–20 K of the gas through most of the funnel; effective temperatures reach ~870 K for a few µs at the exit plate, where the 5 V exit step drives them hard. A 30 V TWAVE at 200 m/s, 4 Torr: ~325 K peak. The example board wired to the combiner with 50 V RF on the TWAVE pads (`twave_board_combiner.ionsim`): 90% transmitted, and the median ion's internal temperature peaks near 1100 K, because ions sample the strong RF close to the pads. RF on the pads heats far more than the wave itself.
+
 **Device builder**
 * Quadrupole rods from a DXF (2D cross-section): 100% transmitted at (a = 0.20, q = 0.70) and 0% at (0.26, 0.70) and (0, 0.95), as the Mathieu diagram says. Before the midpoint field sampling, the gas-flight integrator lost about 60% at the stable point in vacuum at 30 steps per cycle.
 * Ring funnel drawn as a DXF profile (axisymmetric): 100% of m/z 500 transmitted at 2 Torr.
@@ -356,8 +415,12 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * Gas flow is viscous and incompressible with no inertia. The jet from an inlet capillary therefore doesn't carry its momentum downstream (there's no jet disrupter effect), and inlet speeds near sound speed (flagged in the log) are rough. A CFD import of the velocity field would cover both.
 * Insulators carry no surface charge (no charging of exposed FR4 by stray ions).
 * Space charge is the steady state of a continuous beam (DC current). Trapped or accumulated ion packets, and very high currents where the beam chokes, are only flagged, not followed in time. Charge is deposited on the field grid, so very thin beams need a fine grid.
-* One RF frequency for the whole device (any phases). The exit region is DC only.
+* Electrodes not wired to a driver share one RF frequency; drivers add any others (excitation tones, a second RF).
 * 3D voxel fields are first order in the grid spacing, and the grid is capped at 40 M nodes, so very fine features in a large part need a coarser compromise or a cut-down model.
+
+**Ion heating, not modelled yet**
+* The internal temperature follows a single relaxation time, not a full energy-transfer model, and ions have no internal-energy distribution (all ions in a bin share one T_int). Use the numbers to compare devices, regions and settings, and treat absolute fragmentation yields as estimates that depend on your Ea and A.
+* The quadrupole tab flies in vacuum, so tone excitation there ejects ions but does not heat them; collisional activation in a gas-filled quad comes with the drag-field quad below.
 
 **Next: drag-field quadrupole (collision cell).** The integrator already has the three hooks this needs:
 
@@ -394,9 +457,13 @@ ION-SIM/
 │   ├── gridtools.py        # insulators, grid interpolation, charge deposition
 │   ├── dxf.py              # DXF reader: closed shapes, holes, layers, units
 │   ├── device.py           # device builder: electrodes, patterns, grids, solve, flight
+│   ├── drivers.py          # electronics: outputs, RF, TWAVE gates, excitation tones, library
+│   ├── heating.py          # effective / internal ion temperature, fragmentation estimate
 │   └── gui/                # PySide6 app: one tab per device, shared widgets,
-│                           #   device_tab.py and electrode_view.py (clickable electrodes)
-├── examples/               # one demo per device; geometry/ has example STEP, DXF and .ionsim setups
+│                           #   device_tab.py and electrode_view.py (clickable electrodes),
+│                           #   drivers_tab.py, heating_view.py
+├── examples/               # one demo per device; geometry/ has example STEP, DXF and .ionsim setups,
+│                           #   drivers/ has example .iondrv drivers
 ├── tests/smoke_test.py     # quick end-to-end check of imports, solves and the app window
 ├── out/                    # example plots
 ├── docs/                   # screenshots and the script that makes them

@@ -14,12 +14,18 @@ from ..cad import CAD_EXT, MESH_EXT, UNITS, load_bodies
 from .common import ParamForm, SimTab
 from .electrode_view import ElectrodeView, INSULATOR
 from .funnel_tab import FLOWS
+from .driver_store import get_store
+from .heating_view import HeatingBox, draw_heating
 
 MM = 1e-3
 DXF_KINDS = ["planar2d", "axisym", "boards"]
 PATTERNS = ["Fixed voltage", "DC gradient along the ion axis", "TWAVE phases", "Ground (0 V, no RF)",
-            "Remove from TWAVE"]
-COLS = ["Electrode", "Layer", "DC (V)", "RF 0-pk (V)", "RF phase (°)", "TWAVE phase", "Set by", "Insulator εr"]
+            "Remove from TWAVE", "Wire to a driver (Drivers tab)", "Disconnect from driver"]
+COLS = ["Electrode", "Layer", "DC (V)", "RF 0-pk (V)", "RF phase (°)", "TWAVE phase", "Set by", "Insulator εr",
+        "Driver output"]
+WIRINGS = ["All selected to one output", "TWAVE sequence along the ion axis"]
+RF_ALT = {"RF+ / RF- alternate across the path": "across", "RF+ / RF- alternate along the path": "along",
+          "RF+ outputs only": "none"}
 FILE_FILTER = "Geometry (*.dxf *.step *.stp *.iges *.igs *.brep *.stl *.obj *.ply *.off *.glb *.gltf)"
 MAX_NODES = 40_000_000
 
@@ -32,12 +38,14 @@ def examples_dir():
 
 
 class DeviceTab(SimTab):
-    def __init__(self, parent=None):
-        super().__init__(["Geometry", "Potential", "Trajectories", "Results", "Gas flow"], parent)
+    def __init__(self, parent=None, store=None):
+        super().__init__(["Geometry", "Potential", "Trajectories", "Results", "Gas flow", "Heating"], parent)
         self.dev = None
         self.grid = None            # (key, DeviceGrid)
         self.field = None           # last DeviceField (warm start)
         self.selected = set()
+        self.store = store or get_store()
+        self.store.changed.connect(self._library_changed)
         self._building_table = False
         self._project_dir = None
         self._flow = None           # (key, GasFlow)
@@ -122,7 +130,19 @@ class DeviceTab(SimTab):
         self.p_tw = ParamForm("", [("start", "First electrode is phase", 1, 1, 64, 0, 1, ""),
                                    ("dc", "DC on these pads (wave adds to it)", 0.0, -1e5, 1e5, 3, 1, "V")])
         self.p_tw.layout().addRow(QtWidgets.QLabel("Phases are numbered along the ion axis; pads side by side share a phase."))
-        for f in (self.p_fixed, self.p_grad, self.p_tw):
+        self.p_drv = QtWidgets.QGroupBox(); self.p_drv.setFlat(True)
+        fl = QtWidgets.QFormLayout(self.p_drv)
+        self.drv_name = QtWidgets.QComboBox(); self.drv_wiring = QtWidgets.QComboBox(); self.drv_wiring.addItems(WIRINGS)
+        self.drv_out = QtWidgets.QComboBox()
+        self.drv_start = QtWidgets.QSpinBox(); self.drv_start.setRange(1, 64)
+        self.drv_alt = QtWidgets.QComboBox(); self.drv_alt.addItems(list(RF_ALT))
+        fl.addRow("Driver", self.drv_name); fl.addRow("Wiring", self.drv_wiring); fl.addRow("Output", self.drv_out)
+        fl.addRow("First electrode is phase", self.drv_start); fl.addRow("RF polarity", self.drv_alt)
+        fl.addRow(QtWidgets.QLabel("A wired electrode takes its DC, RF, tones and TWAVE from the driver. "
+                                   "Build and edit drivers in the Drivers tab."))
+        self.drv_name.currentIndexChanged.connect(self._drv_pattern_changed)
+        self.drv_wiring.currentIndexChanged.connect(self._drv_pattern_changed)
+        for f in (self.p_fixed, self.p_grad, self.p_tw, self.p_drv):
             f.setFlat(True); v.addWidget(f)
         apply = QtWidgets.QPushButton("Apply"); apply.clicked.connect(self._apply_pattern)
         v.addWidget(apply)
@@ -189,6 +209,8 @@ class DeviceTab(SimTab):
         self.extra.layout().insertRow(0, "Gas flow", self.flow)
         self.flow.currentIndexChanged.connect(self._flow_changed)
         self.form_layout.addWidget(self.extra)
+        self.heat = HeatingBox("8. Ion heating")
+        self.form_layout.addWidget(self.heat)
         self.form_layout.addStretch(1)
 
         self.scroll.setMinimumWidth(470)
@@ -333,22 +355,30 @@ class DeviceTab(SimTab):
         t.setRowCount(0)
         for e in self.dev.electrodes:
             r = t.rowCount(); t.insertRow(r)
-            vals = [e.name, e.layer, f"{e.dc:.4g}", f"{e.rf:.4g}", f"{e.phase:.4g}", "" if e.tw < 0 else str(e.tw + 1), e.role,
-                    f"{e.eps:g}" if e.eps > 0 else ""]
-            for c, val in enumerate(vals):
-                it = QtWidgets.QTableWidgetItem(val)
-                if c in (0, 1, 6):
+            for c in range(len(COLS)):
+                it = QtWidgets.QTableWidgetItem("")
+                if c in (0, 1, 6, 8):
                     it.setFlags(it.flags() & ~QtCore.Qt.ItemIsEditable)
                 t.setItem(r, c, it)
         self._building_table = False
+        self._refresh_rows()
         self._sync_table_selection()
 
     def _refresh_rows(self):
         self._building_table = True
+        grey = QtGui.QBrush(QtGui.QColor(120, 120, 120))
         for r, e in enumerate(self.dev.electrodes):
-            for c, val in ((2, f"{e.dc:.4g}"), (3, f"{e.rf:.4g}"), (4, f"{e.phase:.4g}"),
-                           (5, "" if e.tw < 0 else str(e.tw + 1)), (6, e.role), (7, f"{e.eps:g}" if e.eps > 0 else "")):
-                self.table.item(r, c).setText(val)
+            dc, rf, ph, tw, wired = self._eff(e)
+            self.table.item(r, 0).setText(e.name); self.table.item(r, 1).setText(e.layer)
+            for c, val in ((2, f"{dc:.4g}"), (3, f"{rf:.4g}"), (4, f"{ph:.4g}"),
+                           (5, "" if tw < 0 else str(tw + 1)), (6, e.role), (7, f"{e.eps:g}" if e.eps > 0 else ""),
+                           (8, wired)):
+                it = self.table.item(r, c)
+                it.setText(val)
+                if 2 <= c <= 5:
+                    it.setForeground(grey if e.drive else QtGui.QBrush())
+                    it.setToolTip("From the driver: edit it in the Drivers tab, or type a value here to disconnect"
+                                  if e.drive else "")
         self._building_table = False
 
     def _table_edit(self, item):
@@ -361,6 +391,11 @@ class DeviceTab(SimTab):
             self._refresh_rows()
             return
         c = item.column()
+        if e.drive and 2 <= c <= 5:                        # typing over a driver value disconnects it
+            dc, rf, ph, tw, _ = self._eff(e)
+            e.dc, e.rf, e.phase, e.tw = dc, rf, ph, tw
+            self.log(f"{e.name} disconnected from {e.drive}")
+            e.drive = ""
         if c == 2:
             e.dc = val
         elif c == 3:
@@ -417,11 +452,17 @@ class DeviceTab(SimTab):
         if e.eps > 0:
             self.hover.setText(f"<b>{name}</b> ({e.layer or 'no layer'}): insulator, εr {e.eps:g}")
             return
-        txt = f"<b>{name}</b> ({e.layer or 'no layer'}): DC {e.dc:.4g} V"
-        if e.rf:
-            txt += f", RF {e.rf:.4g} V at {e.phase:g}°"
-        if e.tw >= 0:
-            txt += f", TWAVE phase {e.tw + 1}"
+        dc, rf, ph, tw, wired = self._eff(e)
+        txt = f"<b>{name}</b> ({e.layer or 'no layer'}): DC {dc:.4g} V"
+        if rf:
+            txt += f", RF {rf:.4g} V at {ph:g}°"
+        if tw >= 0:
+            txt += f", TWAVE phase {tw + 1}"
+        if wired:
+            w = self.dev.driver_of(e)
+            if w and w[1].tone_sign and w[0].active_tones():
+                txt += f", {len(w[0].active_tones())} tones"
+            txt += f"  ← {wired}"
         self.hover.setText(txt)
 
     def _select_layer(self):
@@ -435,8 +476,9 @@ class DeviceTab(SimTab):
             self.sel_label.setText("Nothing selected: click electrodes in the drawing or rows in the table")
         elif n == 1:
             e = self.dev.get(next(iter(self.selected)))
-            self.sel_label.setText(f"Selected: <b>{e.name}</b>")
-            self.p_fixed.set("dc", e.dc); self.p_fixed.set("rf", e.rf); self.p_fixed.set("ph", e.phase)
+            self.sel_label.setText(f"Selected: <b>{e.name}</b>" + (f" (wired to {e.drive})" if e.drive else ""))
+            dc, rf, ph, _, _ = self._eff(e)
+            self.p_fixed.set("dc", dc); self.p_fixed.set("rf", rf); self.p_fixed.set("ph", ph)
         else:
             self.sel_label.setText(f"Selected: <b>{n} electrodes</b>")
         self._repaint()
@@ -445,6 +487,56 @@ class DeviceTab(SimTab):
     def _pattern_changed(self, *_):
         k = self.pattern.currentIndex()
         self.p_fixed.setVisible(k == 0); self.p_grad.setVisible(k == 1); self.p_tw.setVisible(k == 2)
+        self.p_drv.setVisible(k == 5)
+        if k == 5:
+            self._fill_drivers()
+
+    # ================= drivers =================
+    def _fill_drivers(self):
+        cur = self.drv_name.currentText()
+        self.drv_name.blockSignals(True)
+        self.drv_name.clear(); self.drv_name.addItems(self.store.names())
+        i = self.drv_name.findText(cur)
+        self.drv_name.setCurrentIndex(max(i, 0))
+        self.drv_name.blockSignals(False)
+        self._drv_pattern_changed()
+
+    def _drv_pattern_changed(self, *_):
+        d = self.store.get(self.drv_name.currentText())
+        cur = self.drv_out.currentText()
+        self.drv_out.clear()
+        if d:
+            self.drv_out.addItems([o.name for o in d.outputs])
+            i = self.drv_out.findText(cur)
+            if i >= 0:
+                self.drv_out.setCurrentIndex(i)
+        seq = self.drv_wiring.currentIndex() == 1
+        lay = self.p_drv.layout()
+        for w, show in ((self.drv_out, not seq), (self.drv_start, seq), (self.drv_alt, seq)):
+            w.setVisible(show); lay.labelForField(w).setVisible(show)
+
+    def _library_changed(self):
+        """A driver was edited in the Drivers tab: refresh the wiring and the colours."""
+        if self.p_drv.isVisible():
+            self._fill_drivers()
+        if self.dev is not None:
+            self._sync_drivers()
+            self._refresh_rows(); self._repaint()
+
+    def _sync_drivers(self):
+        """Give the device the library's current copy of every driver it is wired to."""
+        for name in {e.drive.split(" / ", 1)[0] for e in self.dev.electrodes if e.drive}:
+            d = self.store.get(name)
+            if d is not None:
+                self.dev.drivers[name] = d.copy()
+
+    def _eff(self, e):
+        """What an electrode carries now: (dc, rf, phase, tw, driver label)."""
+        w = self.dev.driver_of(e)
+        if w:
+            o = w[1]
+            return o.dc, o.rf, o.rf_phase, o.tw, e.drive
+        return e.dc, e.rf, e.phase, e.tw, (e.drive + " (missing)" if e.drive else "")
 
     def _apply_pattern(self):
         if not self.dev or not self.selected:
@@ -453,6 +545,8 @@ class DeviceTab(SimTab):
             return
         names = [e.name for e in self.dev.electrodes if e.name in self.selected]
         k = self.pattern.currentIndex()
+        if k in (0, 1, 2, 3):
+            self.dev.unwire(names)
         if k == 0:
             f = self.p_fixed.values(); self.dev.apply_fixed(names, f["dc"], f["rf"], f["ph"])
         elif k == 1:
@@ -464,8 +558,28 @@ class DeviceTab(SimTab):
             self._drive_changed()
         elif k == 3:
             self.dev.apply_fixed(names, 0.0, 0.0, 0.0, label="ground"); self.dev.clear_twave(names)
-        else:
+        elif k == 4:
             self.dev.clear_twave(names)
+        elif k == 5:
+            d = self.store.get(self.drv_name.currentText())
+            if d is None:
+                self._error("No driver", "Build a driver in the Drivers tab first.")
+                return
+            if self.drv_wiring.currentIndex() == 0:
+                self.dev.wire_driver(names, d.copy(), "one", self.drv_out.currentText())
+            else:
+                missing = self.dev.wire_driver(names, d.copy(), "twave", start_phase=self.drv_start.value() - 1,
+                                               rf_alt=RF_ALT[self.drv_alt.currentText()])
+                if missing:
+                    self.log(f"  Note: {d.name} has no output for TWAVE phase(s) {missing}; those electrodes were left as they were.")
+                self.drive.blockSignals(True); self.drive.set("pitch", self.dev.twave.pitch / MM); self.drive.blockSignals(False)
+                self._drive_changed()
+                st = d.step_time()
+                if np.isfinite(st) and self.dev.twave.pitch > 0:
+                    self.log(f"  Wave speed on this board: {self.dev.twave.pitch / st:.4g} m/s "
+                             f"(pitch {self.dev.twave.pitch / MM:.4g} mm, step {st * 1e6:.4g} µs from the driver)")
+        else:
+            self.dev.unwire(names)
         self._refresh_rows()
         self._repaint()
         self.log(f"{PATTERNS[k]} → {len(names)} electrode(s)")
@@ -542,7 +656,8 @@ class DeviceTab(SimTab):
         if self.dev is None:
             self._error("No geometry", "Open a DXF or 3D file first (examples are in examples/geometry).")
             return
-        if not any(e.dc or e.rf or e.tw >= 0 for e in self.dev.electrodes):
+        self._sync_drivers()
+        if not any(any(self._eff(e)[:3]) or self._eff(e)[3] >= 0 for e in self.dev.electrodes):
             self._error("No voltages", "Every electrode is at 0 V. Select electrodes and apply a pattern first.")
             return
         self._drive_to_device()
@@ -561,6 +676,7 @@ class DeviceTab(SimTab):
         flow_cached = self._flow[1] if flow_mode == 2 and dg is not None and self._flow and self._flow[0] == flow_key else None
         h = self.h.value() * MM
         dev = self.dev
+        heat_model = self.heat.model()
 
         def job(progress):
             t0 = time.time()
@@ -581,7 +697,7 @@ class DeviceTab(SimTab):
                                    io["E"], gas_u, io["dt"] * 1e-6 or None, io["tmax"] * 1e-3 or None,
                                    record=min(int(io["n"]), 40),
                                    progress=lambda f: progress(0.3 + 0.7 * f),
-                                   current=ex["I"] * 1e-9, sc_iterations=int(ex["it"]))
+                                   current=ex["I"] * 1e-9, sc_iterations=int(ex["it"]), heating=heat_model)
             return dict(grid=g, field=fld, res=res, info=info, built=dg is None, t_build=t1 - t0, t_solve=t2 - t1,
                         t_fly=time.time() - t2, io=io, key=key, flow=flow, flow_key=flow_key, ex=ex)
 
@@ -627,13 +743,18 @@ class DeviceTab(SimTab):
         self._draw_potential(fld, res.space_charge)
         self._draw_traj(fld, res, info)
         self._draw_results(res, info)
+        if res.heat is not None:
+            self.log("  Heating: " + res.heat.summary(st >= 0))
+        draw_heating(self.plots.figs["Heating"], res.heat, st,
+                     title=f"m/z {io['mz']:g} in {io['p']:g} Torr: ion heating along the ion axis")
+        self.plots.draw("Heating")
 
     # ================= drawing =================
     def _repaint(self):
         if self.dev is None:
             return
-        sm = self.view.paint({e.name: e.dc for e in self.dev.electrodes}, self.selected,
-                             rf={e.name for e in self.dev.electrodes if e.rf and not e.eps},
+        sm = self.view.paint({e.name: self._eff(e)[0] for e in self.dev.electrodes}, self.selected,
+                             rf={e.name for e in self.dev.electrodes if self._eff(e)[1] and not e.eps},
                              insulators={e.name for e in self.dev.electrodes if e.eps > 0})
         if getattr(self, "_cbar", None) is not None:
             self._cbar.update_normal(sm)
@@ -679,9 +800,10 @@ class DeviceTab(SimTab):
                 p = PathPatch(Path(np.vstack(verts), codes))
                 ax.add_patch(p)
                 self.view.add(e.name, p)
-                if e.tw >= 0:
+                tw = self._eff(e)[3]
+                if tw >= 0:
                     c = s.centroid / MM
-                    ax.text(c[0], c[1], str(e.tw + 1), ha="center", va="center", fontsize=6, zorder=5)
+                    ax.text(c[0], c[1], str(tw + 1), ha="center", va="center", fontsize=6, zorder=5)
             b = np.array([e.shape.bbox for e in dev.electrodes]) / MM
             lo, hi = b[:, :2].min(0), b[:, 2:].max(0)
             m = 0.05 * float(np.max(hi - lo))
@@ -695,8 +817,8 @@ class DeviceTab(SimTab):
             ax.set_title(tt + ".  Colour: DC, hatched: RF, numbers: TWAVE phase, tan: insulator", fontsize=9)
             if dev.kind == "axisym":
                 ax.axhline(0, color="k", lw=0.6, ls="-.")
-        sm = self.view.paint({e.name: e.dc for e in dev.electrodes}, self.selected,
-                             rf={e.name for e in dev.electrodes if e.rf and not e.eps},
+        sm = self.view.paint({e.name: self._eff(e)[0] for e in dev.electrodes}, self.selected,
+                             rf={e.name for e in dev.electrodes if self._eff(e)[1] and not e.eps},
                              insulators={e.name for e in dev.electrodes if e.eps > 0})
         self._cbar = fig.colorbar(sm, ax=ax, label="DC voltage (V)")
         self.plots.draw("Geometry")
@@ -793,7 +915,7 @@ class DeviceTab(SimTab):
         d["source"] = os.path.relpath(self.dev.source, os.path.dirname(os.path.abspath(path)))
         d["gui"] = {"units": self.units.currentText(), "axis": self.axis.currentText(), "quality": self.quality.currentText(),
                     "h_mm": self.h.value(), "ions": self.ions.values(), "drive": self.drive.values(), "geo": self.geo.values(),
-                    "extra": self.extra.values(), "flow": self.flow.currentIndex()}
+                    "extra": self.extra.values(), "flow": self.flow.currentIndex(), "heat": self.heat.values()}
         with open(path, "w") as f:
             json.dump(d, f, indent=1)
         self.log(f"Saved setup to {path}")
@@ -818,6 +940,8 @@ class DeviceTab(SimTab):
         gui = d.get("gui", {})
         self._set_combo(self.units, gui.get("units", "mm")); self._set_combo(self.axis, gui.get("axis", "z"))
         self.flow.setCurrentIndex(int(gui.get("flow", 0)))
+        if "heat" in gui:
+            self.heat.set_values(gui["heat"])
         for form, key in ((self.geo, "geo"), (self.drive, "drive"), (self.ions, "ions"), (self.extra, "extra")):
             form.blockSignals(True)
             for k, v in gui.get(key, {}).items():
@@ -828,6 +952,7 @@ class DeviceTab(SimTab):
         if not self.load_file(src, d.get("kind")):
             return
         missing = self.dev.apply_dict(d)
+        self._adopt_drivers()
         for form, key in ((self.ions, "ions"),):
             for k, v in gui.get(key, {}).items():
                 if k in form.boxes:
@@ -841,6 +966,30 @@ class DeviceTab(SimTab):
         self.log(f"Opened setup {os.path.basename(path)}")
         if missing:
             self.log("  Note: these electrodes are no longer in the file: " + ", ".join(missing))
+
+    def _adopt_drivers(self):
+        """Drivers saved in a setup go into the library. One that differs from the library's
+        driver of the same name comes in as '<name> (from setup)' so neither is lost."""
+        changed = False
+        for name, drv in list(self.dev.drivers.items()):
+            have = self.store.get(name)
+            if have is not None and have.to_dict() == drv.to_dict():
+                continue
+            new = name
+            if have is not None:
+                new = self.store.lib.add(drv.copy(f"{name} (from setup)"), replace=False)
+                for e in self.dev.electrodes:
+                    if e.drive.startswith(name + " / "):
+                        e.drive = new + e.drive[len(name):]
+                del self.dev.drivers[name]
+                self.dev.drivers[new] = self.store.get(new).copy()
+                self.log(f"  The setup's driver '{name}' differs from yours; added it as '{new}'.")
+            else:
+                self.store.lib.add(drv.copy())
+                self.log(f"  Added the setup's driver '{name}' to your drivers.")
+            changed = True
+        if changed:
+            self.store.touch()
 
     # ================= helpers =================
     def _error(self, title, text):

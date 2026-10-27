@@ -17,7 +17,8 @@ a = Analysis(
                   + collect_submodules("pyamg") + collect_submodules("trimesh.exchange")
                   + collect_submodules("ezdxf.path") + collect_submodules("ezdxf.entities"),
     datas=[(p, "examples/geometry") for p in glob.glob("examples/geometry/*")
-           if p.endswith((".dxf", ".step", ".ionsim"))],                        # sample files for the Device builder
+           if p.endswith((".dxf", ".step", ".ionsim"))]                         # sample files for the Device builder
+          + [(p, "examples/drivers") for p in glob.glob("examples/drivers/*.iondrv")],   # sample drivers
     excludes=["tkinter", "PyQt5", "PyQt6", "IPython", "pytest"],
 )
 pyz = PYZ(a.pure)

@@ -1,8 +1,10 @@
 """Quick end-to-end check that an install works (about a minute). Run:
     python tests/smoke_test.py          (set QT_QPA_PLATFORM=offscreen on a headless machine)
 Exits non-zero with a message if anything is broken."""
-import os, sys, time
+import os, sys, time, tempfile
 import numpy as np
+
+os.environ.setdefault("IONSIM_DRIVERS", os.path.join(tempfile.mkdtemp(), "drivers.json"))   # keep the user's driver library untouched
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, ROOT)
@@ -100,10 +102,61 @@ res, _ = fly_device(fld, 500, 1.0, 30, 4.0, radius=3e-3, z_start=0.5e-3, z_end=3
 check("gas flow + space charge", res.transmission > 0.8 and res.sc_history[0][1] > 0,
       f"transmission {res.transmission:.0%}, space-charge peak {res.sc_history[0][1]:.2f} V")
 
+# drivers: TWAVE gates (4 of 8 high, stepping one phase per step) and wiring a board to a combiner
+from ionsim.drivers import twave_rf_combiner, quad_excitation, Tone
+drv = twave_rf_combiner()
+st = drv.step_time()
+gates = np.array([drv.tw_spec().level(p, (np.arange(8) + 0.5) * st) for p in range(8)])
+check("driver TWAVE gates", np.all(gates.sum(0) == 4) and gates[0, 0] == 1 and gates[0, 1] == 0 and gates[1, 1] == 1,
+      f"{int(gates.sum(0)[0])} of 8 high")
+dev = from_drawing(load_dxf(os.path.join(GEO, "twave_board.dxf")), "boards")
+tw_pads = [e.name for e in dev.electrodes if e.layer == "TW"]
+missing = dev.wire_driver(tw_pads, drv, "twave")
+from ionsim.device import part_values
+parts, _ = part_values(dev)
+check("driver wiring", not missing and sum(p.startswith("tw@") for p in parts) == 8 and "cos" in parts,
+      f"{len(parts)} field parts for {len(drv.outputs)} outputs")
+
+# quadrupole: a tone at twice the secular frequency, on the RF, ejects that m/z (and only with the tone)
+from ionsim import quadrupole_rods, solve_basis, GridField2D, make_beam, Simulation
+g = quadrupole_rods(4e-3, dx=4e-3 / 40, split=True); basis = solve_basis(g)
+qd = quad_excitation()
+fx, _ = mathieu.secular_freqs(0, 300, 500, 4.03e-3, 1e6)
+T = []
+for amp in (0.0, 15.0):
+    qd.tones = [Tone(2 * fx, amp)] if amp else []
+    volts = {r: (lambda tt, o=o: float(qd.waveform(o, tt))) for r, o in
+             (("x+", "Rods A (x)"), ("x-", "Rods A (x)"), ("y+", "Rods B (y)"), ("y-", "Rods B (y)"))}
+    ions = make_beam(20, 500, 1, 5.0, 0.3e-3, 1.0, birth_window=1e-6, rng=np.random.default_rng(0))
+    T.append(Simulation([GridField2D(g, basis, volts)], z_end=0.2).run(ions, 1 / 30e6, 3e-4).transmission)
+check("quad tone ejects its m/z", T[0] > 0.9 and T[1] < 0.2, f"no tone {T[0]:.0%}, tone at 2 f_sec {T[1]:.0%}")
+
+# ion heating: effective temperature in a DC drift field = T + M (K E)^2 / 3k
+from ionsim.gasflight import disc_ions, fly
+from ionsim.heating import HeatingModel
+from ionsim.twave import mobility
+from ionsim.constants import AMU, K_B
+
+
+class Uniform:
+    def efield(self, t, p):
+        e = np.zeros_like(p); e[:, 2] = 2e4; return e
+
+    def hit(self, p):
+        return np.zeros(len(p), bool)
+
+
+Kh = mobility(1.0, 4.0, 300)
+res = fly(Uniform(), disc_ions(200, 500, Kh, 1, radius=0, rng=np.random.default_rng(0)), 2e-8, 2e-5, 1.0,
+          heating=HeatingModel(), rng=np.random.default_rng(0))
+want = 300 + 28.013 * AMU * (Kh * 2e4) ** 2 / (3 * K_B)
+check("ion heating (Wannier)", abs(res.heat.teff_mean.mean() - want) < 0.01 * want,
+      f"{res.heat.teff_mean.mean():.1f} K vs {want:.1f} K")
+
 # the app window builds
 from PySide6 import QtWidgets
 from ionsim.gui.app import MainWindow
 app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
 w = MainWindow()
-check("app window", w.tabs.count() >= 6, f"{w.tabs.count()} tabs")
+check("app window", w.tabs.count() >= 7, f"{w.tabs.count()} tabs")
 print(f"all good in {time.time() - t0:.0f} s")

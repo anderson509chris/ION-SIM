@@ -33,6 +33,7 @@ class GasIons:
     charge: np.ndarray    # (N,) C
     K: np.ndarray         # (N,) mobility at the gas conditions, m^2/Vs
     t0: np.ndarray        # (N,) birth time, s
+    v0: np.ndarray = None # (N,3) launch velocity without the thermal part (ion heating starts from it)
 
     @property
     def mz(self):
@@ -60,6 +61,7 @@ class FlightResult:
     final_pos: np.ndarray
     traj_t: np.ndarray = None
     traj: np.ndarray = None   # (n_samples, n_record, 3), NaN after an ion stops
+    heat: object = None           # heating.HeatResult when ion heating was tracked
     space_charge: object = None   # spacecharge.SpaceCharge used for this flight, if any
     sc_history: list = None
     sc_converged: bool = True
@@ -70,13 +72,15 @@ class FlightResult:
 
 
 def fly(field, ions, dt, t_max, z_end, temp_k=300.0, gas_velocity=0.0, record=0, record_every=10,
-        rng=None, progress=None, dwell=None, dwell_every=5):
+        rng=None, progress=None, dwell=None, dwell_every=5, heating=None):
     """Fly GasIons until they pass z = z_end, hit something, or t_max.
     gas_velocity: uniform gas speed along +z (m/s), or a flow field with velocity(pos) -> (N,3).
     record: number of ions whose paths are kept.
     progress: optional callable(fraction) -> True to stop early.
     dwell: optional accumulator with add(pos, weight); gets the flying ions' positions every
-    dwell_every steps with weight dwell_every * dt (space charge)."""
+    dwell_every steps with weight dwell_every * dt (space charge).
+    heating: optional heating.HeatingModel; tracks every ion's effective and internal
+    temperature (res.heat)."""
     rng = rng or np.random.default_rng()
     pos, vel = ions.pos.copy(), ions.vel.copy()
     n = len(pos)
@@ -95,6 +99,10 @@ def fly(field, ions, dt, t_max, z_end, temp_k=300.0, gas_velocity=0.0, record=0,
     flow = gas_velocity if hasattr(gas_velocity, "velocity") else None
     u = np.array([0.0, 0.0, 0.0 if flow else gas_velocity])
 
+    heat = None
+    if heating is not None:
+        from .heating import HeatTracker
+        heat = HeatTracker(heating, ions, temp_k, float(ions.pos[:, 2].min()), z_end, tau)
     status = np.where(ions.t0 > 0, -1, 0).astype(np.int8)
     t_end = np.full(n, np.nan)
     rec = np.arange(min(record, n))
@@ -115,6 +123,8 @@ def fly(field, ions, dt, t_max, z_end, temp_k=300.0, gas_velocity=0.0, record=0,
             x1, x2 = rng.standard_normal((len(s), 3)), rng.standard_normal((len(s), 3))
             pos[s] = p + (u + atau) * dt + w * (tau[s] * one_c[s])[:, None] + kx1[s, None] * x1 + kx2[s, None] * x2
             vel[s] = u + atau + w * c[s, None] + sv[s, None] * x1
+            if heat is not None:
+                heat.step(s, u, atau, c[s], dt, pos[s])
             hit = field.hit(pos[s])
             done = pos[s, 2] >= z_end
             status[s[hit & ~done]] = 2
@@ -132,6 +142,8 @@ def fly(field, ions, dt, t_max, z_end, temp_k=300.0, gas_velocity=0.0, record=0,
         if progress and step % 200 == 0 and progress(max(t / t_max, np.mean(status > 0))):
             break
     res = FlightResult(status, t_end, pos)
+    if heat is not None:
+        res.heat = heat.result()
     if len(rec):
         res.traj_t, res.traj = np.array(traj_t), np.array(traj)
     return res

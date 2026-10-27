@@ -28,10 +28,11 @@ class Grid2D:
         return self.add_electrode(name, (self.X - cx) ** 2 + (self.Y - cy) ** 2 <= radius ** 2)
 
 
-def quadrupole_rods(r0, rod_ratio=1.1487, dx=None, margin=1.5):
+def quadrupole_rods(r0, rod_ratio=1.1487, dx=None, margin=1.5, split=False):
     """Four round rods at (+-(r0+R),0), (0,+-(r0+R)).
 
-    Rods on the x axis form electrode "A", rods on the y axis form "B".
+    Rods on the x axis form electrode "A", rods on the y axis form "B". With split, each
+    rod is its own electrode: "x+", "x-", "y+", "y-" (for dipolar excitation).
     rod_ratio = R/r0; 1.1487 is the classic best round-rod approximation to hyperbolic.
     The outer grid boundary is a grounded can.
     """
@@ -40,7 +41,8 @@ def quadrupole_rods(r0, rod_ratio=1.1487, dx=None, margin=1.5):
     half = (r0 + 2 * R) * margin
     g = Grid2D(half, dx)
     c = r0 + R
-    for cx, cy, name in [(c, 0, "A"), (-c, 0, "A"), (0, c, "B"), (0, -c, "B")]:
+    names = ["x+", "x-", "y+", "y-"] if split else ["A", "A", "B", "B"]
+    for (cx, cy), name in zip([(c, 0), (-c, 0), (0, c), (0, -c)], names):
         g.add_rod(name, cx, cy, R)
     g.r0 = r0
     g.rod_radius = R

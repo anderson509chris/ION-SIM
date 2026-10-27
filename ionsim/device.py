@@ -14,7 +14,8 @@ Flight coordinates: ions travel along +z. planar2d: x, y = drawing x, y. axisym:
 drawing x, r = radius. boards: z = drawing x, x = drawing y, y = normal to the boards.
 
 Every electrode carries   V(t) = dc + rf cos(2 pi f t + phase)  [+ TWAVE amplitude when
-its phase is on]. A part with a relative permittivity (eps > 0) is an insulator instead
+its phase is on], or is wired to an output of a Driver (drivers.py), whose waveform can
+add excitation tones at other frequencies, its own TWAVE timing and edge rise times. A part with a relative permittivity (eps > 0) is an insulator instead
 (PCB substrate, spacer): it shapes the field but carries no voltage. Boards can also get
 an FR4 substrate behind the pads (board_thickness, board_eps), grounded on its back face. The field is the sum of a few solved "parts" (dc, cos, sin, one per
 TWAVE phase), each a Laplace solve with those boundary values, so any time is a cheap
@@ -28,6 +29,7 @@ from .laplace import LaplaceSolver
 from .axisym import AxisymGrid
 from .grid3d import Grid3D
 from .gridtools import GridMap, Media
+from .drivers import Driver, TwSpec
 
 KINDS = {
     "planar2d": "2D cross-section (extruded along the ion axis)",
@@ -53,9 +55,11 @@ class Electrode:
     tw: int = -1                # TWAVE phase index, -1 = not a TWAVE electrode
     role: str = ""              # which pattern set it (shown in the table)
     eps: float = 0.0            # > 0: an insulator with this relative permittivity, not an electrode
+    drive: str = ""             # "Driver / Output" when wired to a driver; overrides dc, rf, phase, tw
 
     def settings(self):
-        return {"dc": self.dc, "rf": self.rf, "phase": self.phase, "tw": self.tw, "role": self.role, "eps": self.eps}
+        return {"dc": self.dc, "rf": self.rf, "phase": self.phase, "tw": self.tw, "role": self.role, "eps": self.eps,
+                "drive": self.drive}
 
 
 @dataclass
@@ -84,6 +88,7 @@ class Device:
     open_entrance: bool = True      # the z-min end is open (ions come from upstream)
     board_thickness: float = 0.0    # boards: substrate behind the pads (0 = none)
     board_eps: float = 4.4          # boards: substrate relative permittivity (FR4)
+    drivers: dict = field(default_factory=dict)   # name -> Driver, for electrodes wired to drivers
 
     # ---------- geometry helpers ----------
     def names(self):
@@ -172,6 +177,81 @@ class Device:
     def has_twave(self):
         return any(e.tw >= 0 for e in self.electrodes)
 
+    # ---------- drivers ----------
+    def driver_of(self, e):
+        """(Driver, Output) an electrode is wired to, or None."""
+        if not e.drive or " / " not in e.drive:
+            return None
+        dn, on = e.drive.split(" / ", 1)
+        d = self.drivers.get(dn)
+        if d is None:
+            return None
+        try:
+            return d, d.output(on)
+        except KeyError:
+            return None
+
+    def tw_spec(self):
+        """The device's own TWAVE timing (for electrodes not wired to a driver)."""
+        t = self.twave
+        return TwSpec("device", t.n_phases, t.n_on, t.amplitude, t.step_time(), 0.0)
+
+    def components(self, e):
+        """(dc, [(freq, amp, phase_deg)], (TwSpec, phase) or None) of one electrode."""
+        w = self.driver_of(e)
+        if w:
+            return w[0].components(w[1])
+        sines = [(self.rf_freq, e.rf, e.phase)] if e.rf else []
+        tw = (self.tw_spec(), e.tw) if 0 <= e.tw < self.twave.n_phases else None
+        return e.dc, sines, tw
+
+    def wire_driver(self, names, drv, mode="one", output=None, start_phase=0, rf_alt="across"):
+        """Wire electrodes to a driver. mode "one": all to `output`. mode "twave": TWAVE
+        phases in order along the ion axis (electrodes side by side share a phase), each to
+        the driver output carrying that phase; where the driver has RF+ and RF- versions of
+        a phase, they alternate across the path (rf_alt="across"), along it ("along"), or
+        RF+ only ("none")."""
+        self.drivers[drv.name] = drv
+        if mode == "one":
+            for e in (self.get(n) for n in names):
+                e.drive, e.role = f"{drv.name} / {output}", f"{drv.name}: {output}"
+            return []
+        els, pos, ranks = self._members(names)
+        n = drv.tw_phases
+        missing = set()
+        # rank across the path among electrodes of the same column
+        across = np.zeros(len(els), int)
+        for r in set(ranks):
+            idx = [i for i in range(len(els)) if ranks[i] == r]
+            idx.sort(key=lambda i: self._across(els[i]))
+            for j, i in enumerate(idx):
+                across[i] = j
+        for i, (e, r) in enumerate(zip(els, ranks)):
+            ph = int((start_phase + r) % n)
+            cands = [o for o in drv.outputs if o.tw == ph]
+            if not cands:
+                missing.add(ph + 1)
+                continue
+            pol = {"across": across[i] % 2, "along": r % 2}.get(rf_alt, 0)
+            pick = [o for o in cands if (abs(((o.rf_phase + 90) % 360) - 90) > 90) == bool(pol)] or cands
+            e.drive, e.role = f"{drv.name} / {pick[0].name}", f"{drv.name}: {pick[0].name}"
+            e.tw = ph
+        self.twave.n_phases = n
+        cols = np.array(sorted({round(p, 9) for p in pos}))
+        if len(cols) > 1:
+            self.twave.pitch = float(np.median(np.diff(cols)))
+        return sorted(missing)
+
+    def _across(self, e):
+        if self.kind == "cad3d":
+            return float(e.tris[:, :, 0].mean())
+        return float(e.shape.centroid[1])
+
+    def unwire(self, names):
+        for e in (self.get(n) for n in names):
+            if e.drive:
+                e.drive, e.role = "", ""
+
     # ---------- grids ----------
     def default_h(self, quality="Quick"):
         lo, hi = self.extent()
@@ -199,7 +279,9 @@ class Device:
                 "twave": asdict(self.twave), "board_gap": self.board_gap, "both_boards": self.both_boards,
                 "length": self.length, "open_entrance": self.open_entrance,
                 "board_thickness": self.board_thickness, "board_eps": self.board_eps,
-                "electrodes": {e.name: e.settings() for e in self.electrodes}}
+                "electrodes": {e.name: e.settings() for e in self.electrodes},
+                "drivers": [d.to_dict() for n, d in self.drivers.items()
+                            if any(e.drive.startswith(n + " / ") for e in self.electrodes)]}
 
     def apply_dict(self, d):
         for k in ("rf_freq", "board_gap", "both_boards", "length", "open_entrance", "board_thickness", "board_eps"):
@@ -207,6 +289,9 @@ class Device:
                 setattr(self, k, d[k])
         if "twave" in d:
             self.twave = Twave(**d["twave"])
+        for dd in d.get("drivers", []):
+            drv = Driver.from_dict(dd)
+            self.drivers[drv.name] = drv
         missing = []
         for name, s in d.get("electrodes", {}).items():
             try:
@@ -419,27 +504,35 @@ class _Mirror:
 
 # ---------------------------------------------------------------------------------
 def part_values(dev):
-    """Boundary value per electrode id for every part: {"dc","cos","sin","tw0".."twN-1"}."""
+    """Boundary value per electrode id for every part, and what each part is.
+    Parts: "dc"; "cos"/"sin" at the device RF frequency and "cos@f"/"sin@f" at any other
+    frequency (driver RF, excitation tones); "tw{p}" for the device's TWAVE phases and
+    "tw@{driver}#{p}" for a driver's. Returns ({name: values}, {name: meta})."""
     n = len(dev.electrodes) + 1
-    parts = {"dc": np.zeros(n)}
-    c, s = np.zeros(n), np.zeros(n)
-    tw = np.zeros((dev.twave.n_phases, n))
+    vals, meta = {"dc": np.zeros(n)}, {"dc": ("dc",)}
+
+    def part(name, m):
+        if name not in vals:
+            vals[name], meta[name] = np.zeros(n), m
+        return vals[name]
+
     for k, e in enumerate(dev.electrodes, start=1):
-        parts["dc"][k] = e.dc
-        ph = np.radians(e.phase)
-        c[k], s[k] = e.rf * np.cos(ph), e.rf * np.sin(ph)
-        if 0 <= e.tw < dev.twave.n_phases:
-            tw[e.tw, k] = 1.0
-    c[np.abs(c) < 1e-12] = 0.0
-    s[np.abs(s) < 1e-12] = 0.0
-    if c.any():
-        parts["cos"] = c
-    if s.any():
-        parts["sin"] = s
-    for p in range(dev.twave.n_phases):
-        if tw[p].any():
-            parts[f"tw{p}"] = tw[p]
-    return parts
+        dc, sines, tw = dev.components(e)
+        vals["dc"][k] = dc
+        for f, amp, ph in sines:
+            tag = "" if np.isclose(f, dev.rf_freq, rtol=1e-9) else f"@{f:.9g}"
+            part("cos" + tag, ("cos", f))[k] += amp * np.cos(np.radians(ph))
+            part("sin" + tag, ("sin", f))[k] += amp * np.sin(np.radians(ph))
+        if tw:
+            spec, p = tw
+            name = f"tw{p}" if spec.key == "device" else f"tw@{spec.key}#{p}"
+            part(name, ("tw", spec, p))[k] = 1.0
+    out_v, out_m = {}, {}
+    for name, v in vals.items():
+        v[np.abs(v) < 1e-12] = 0.0
+        if name == "dc" or v.any():
+            out_v[name], out_m[name] = v, meta[name]
+    return out_v, out_m
 
 
 class DeviceField:
@@ -451,7 +544,7 @@ class DeviceField:
         self.freq = self.dev.rf_freq
         self.tw = Twave(**asdict(self.dev.twave))
         solver = dgrid.solver()
-        vals = part_values(self.dev)
+        vals, self.meta = part_values(self.dev)
         self.parts = list(vals)
         guess = previous.phi if previous is not None and previous.dg is dgrid else {}
         el = dgrid.electrode
@@ -471,21 +564,32 @@ class DeviceField:
 
     # ---- time dependence ----
     def coefficients(self, t):
-        w = 2 * np.pi * self.freq * t
-        step = np.floor(t / self.tw.step_time()) if np.isfinite(self.tw.step_time()) else 0
         out = []
         for p in self.parts:
-            if p == "dc":
+            m = self.meta[p]
+            if m[0] == "dc":
                 out.append(1.0)
-            elif p == "cos":
-                out.append(np.cos(w))
-            elif p == "sin":
-                out.append(-np.sin(w))
+            elif m[0] == "cos":
+                out.append(np.cos(2 * np.pi * m[1] * t))
+            elif m[0] == "sin":
+                out.append(-np.sin(2 * np.pi * m[1] * t))
             else:
-                k = int(p[2:])
-                on = ((k - step) % self.tw.n_phases) < self.tw.n_on
-                out.append(self.tw.amplitude if on else 0.0)
+                spec, k = m[1], m[2]
+                out.append(spec.amp * float(spec.level(k, t)))
         return np.array(out)
+
+    # ---- timing, for picking time steps ----
+    def frequencies(self):
+        return sorted({m[1] for m in self.meta.values() if m[0] in ("cos", "sin")})
+
+    def tw_specs(self):
+        return list({m[1] for m in self.meta.values() if m[0] == "tw"})
+
+    def tw_speed(self):
+        """Slowest wave speed (m/s) over the TWAVE sequencers in use, at the device pitch."""
+        pitch = self.dev.twave.pitch
+        sp = [pitch / s.step for s in self.tw_specs() if np.isfinite(s.step) and s.step > 0 and pitch > 0]
+        return min(sp) if sp else 0.0
 
     # ---- interpolation ----
     def _grid_coords(self, pos):
@@ -582,11 +686,12 @@ def device_gas_flow(fld, slm, pressure_torr, temp_k, inlet_radius, center=(0.0, 
 
 def fly_device(fld, mz, K0, n, pressure_torr, temp_k=300.0, charge_state=1, center=(0.0, 0.0),
                radius=0.5e-3, z_start=None, z_end=None, energy_ev=0.0, gas_velocity=0.0, dt=None,
-               t_max=None, record=40, rng=None, progress=None, current=0.0, sc_iterations=4):
+               t_max=None, record=40, rng=None, progress=None, current=0.0, sc_iterations=4, heating=None):
     """Fly n ions of one m/z through a DeviceField with gas (Langevin) dynamics.
     Near-vacuum works too: give a tiny pressure and an axial energy.
     gas_velocity: uniform speed along z (m/s) or a GasFlow (device_gas_flow).
-    current: ion beam current (A); non-zero iterates the beam's space charge."""
+    current: ion beam current (A); non-zero iterates the beam's space charge.
+    heating: a heating.HeatingModel to track ion heating (res.heat)."""
     from .gasflight import disc_ions, fly
     from .twave import mobility
     from .constants import AMU, E_CHARGE
@@ -597,12 +702,13 @@ def fly_device(fld, mz, K0, n, pressure_torr, temp_k=300.0, charge_state=1, cent
     z_start = lo[2] if z_start is None else z_start
     z_end = hi[2] if z_end is None else z_end
     K = mobility(K0, max(pressure_torr, 1e-9), temp_k)
-    freq = fld.freq
-    has_rf = any(p in fld.parts for p in ("cos", "sin"))
+    freqs = fld.frequencies()
+    has_rf = bool(freqs)
+    steps_tw = [sp.step for sp in fld.tw_specs() if np.isfinite(sp.step) and sp.step > 0]
     if dt is None:
-        cands = [1 / (freq * 30)] if has_rf else []
-        if np.isfinite(fld.tw.step_time()) and any(p.startswith("tw") for p in fld.parts):
-            cands.append(fld.tw.step_time() / 20)
+        cands = [1 / (max(freqs) * 30)] if has_rf else []
+        cands += [st / 20 for st in steps_tw]
+        cands += [sp.rise / 4 for sp in fld.tw_specs() if sp.rise > 0]
         L = max(z_end - z_start, 1e-6)
         cands.append(L / 2000)
         tau = mz * charge_state * AMU * K / (charge_state * E_CHARGE)
@@ -612,8 +718,8 @@ def fly_device(fld, mz, K0, n, pressure_torr, temp_k=300.0, charge_state=1, cent
     if t_max is None:
         L = max(z_end - z_start, 1e-6)
         v = u_typ + (np.sqrt(2 * energy_ev * E_CHARGE / (mz * AMU)) if energy_ev > 0 else 0)
-        if np.isfinite(fld.tw.step_time()) and any(p.startswith("tw") for p in fld.parts):
-            v = max(v, 0.05 * fld.tw.speed)
+        if fld.tw_speed() > 0:
+            v = max(v, 0.05 * fld.tw_speed())
         if pressure_torr > 0.01:
             v = max(v, K * 500.0)                    # ~5 V/cm drift as a floor
         t_max = 3 * L / max(v, 1.0)
@@ -623,12 +729,15 @@ def fly_device(fld, mz, K0, n, pressure_torr, temp_k=300.0, charge_state=1, cent
 
     def fly_once(f, dwell=None, dwell_every=5, prog=progress):
         ions = disc_ions(n, mz * charge_state, K, charge_state, center, radius, z_start, temp_k,
-                         birth_window=(1 / freq if has_rf else 0.0), rng=rng)
+                         birth_window=(min(1 / min(freqs), 1e-4) if has_rf else 0.0), rng=rng)
         if energy_ev > 0:
-            ions.vel[:, 2] += np.sqrt(2 * energy_ev * E_CHARGE * charge_state / (mz * charge_state * AMU))
+            v_in = np.sqrt(2 * energy_ev * E_CHARGE * charge_state / (mz * charge_state * AMU))
+            ions.vel[:, 2] += v_in
+            ions.v0 = np.zeros_like(ions.vel)
+            ions.v0[:, 2] = v_in - (0.0 if hasattr(gas_velocity, "velocity") else gas_velocity)
         return fly(f, ions, dt, t_max, z_end, temp_k, gas_velocity, record=record,
                    record_every=max(1, int(steps / 400)), rng=rng, progress=prog, dwell=dwell,
-                   dwell_every=max(1, int(steps / 2000)))
+                   dwell_every=max(1, int(steps / 2000)), heating=heating)
 
     if current:
         res, _, _ = fly_with_space_charge(fly_once, fld, fld.dg.gridmap(), fld.dg.solver(), current,

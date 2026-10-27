@@ -1,7 +1,7 @@
 """Quadrupole mass filter tab."""
 import time
 import numpy as np
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from ..constants import AMU, E_CHARGE
 from ..geometry import quadrupole_rods
@@ -11,13 +11,18 @@ from ..ions import make_beam
 from ..integrator import Simulation
 from .. import mathieu
 from .common import ParamForm, SimTab
+from .driver_store import get_store
 
 MODES = ["Trajectories at (a, q)", "Trajectories at (U, V)", "Mass scan"]
+DRIVER_MODES = ["Trajectories at the ion m/z", "Transmission vs m/z (excitation scan)"]
+RODS = ["x+", "x-", "y+", "y-"]
+BUILTIN = "Built-in RF/DC (set a, q or U, V below)"
 
 
 class QuadTab(SimTab):
-    def __init__(self, parent=None):
-        super().__init__(["Potential", "Trajectories", "Cross-section", "Stability", "Mass scan"], parent)
+    def __init__(self, parent=None, store=None):
+        super().__init__(["Potential", "Trajectories", "Cross-section", "Stability", "Mass scan", "Excitation"], parent)
+        self.store = store or get_store()
         self.geom = ParamForm("Rods", [
             ("r0", "Field radius r0", 4.0, 0.5, 50, 3, 0.1, "mm"),
             ("ratio", "Rod radius / r0", 1.1487, 0.5, 2.0, 4, 0.01, ""),
@@ -49,9 +54,42 @@ class QuadTab(SimTab):
             ("npts", "Masses", 41, 3, 400, 0, 2, ""),
             ("per", "Ions per mass", 100, 5, 5000, 0, 10, ""),
         ])
+        self.dscan = ParamForm("Excitation scan", [
+            ("m1", "m/z from", 100, 1, 1e6, 1, 10, ""),
+            ("m2", "m/z to", 2000, 1, 1e6, 1, 10, ""),
+            ("npts", "Masses (log spaced)", 60, 3, 400, 0, 5, ""),
+            ("per", "Ions per mass", 30, 5, 5000, 0, 5, ""),
+        ])
+        self.dn = ParamForm("Ions to fly", [("n", "Ions", 20, 1, 5000, 0, 5, "")])
+
+        # ---- drive: built-in RF/DC or a driver from the Drivers tab ----
+        drive = QtWidgets.QGroupBox("Drive")
+        dl = QtWidgets.QFormLayout(drive)
+        self.drive = QtWidgets.QComboBox()
+        self.drive.setToolTip("Built-in RF/DC, or one of the drivers you built in the Drivers tab "
+                              "(its RF, DC and excitation tones then drive the rods)")
+        dl.addRow("Source", self.drive)
+        self.rod_box = {}
+        for rod, label in zip(RODS, ("Rod x+", "Rod x−", "Rod y+", "Rod y−")):
+            cb = QtWidgets.QComboBox(); cb.currentIndexChanged.connect(self._driver_info)
+            dl.addRow(label, cb); self.rod_box[rod] = cb
+        self.drive_info = QtWidgets.QLabel(); self.drive_info.setWordWrap(True)
+        self.drive_info.setTextFormat(QtCore.Qt.RichText)
+        dl.addRow(self.drive_info)
+        retune = QtWidgets.QHBoxLayout()
+        self.tone_k = QtWidgets.QSpinBox(); self.tone_k.setRange(1, 64); self.tone_k.setPrefix("tone ")
+        self.tone_mz = QtWidgets.QDoubleSpinBox(); self.tone_mz.setRange(1, 1e6); self.tone_mz.setValue(500)
+        self.tone_mz.setPrefix("m/z ")
+        b = QtWidgets.QPushButton("Aim"); b.setToolTip("Set this tone's frequency so it ejects that m/z")
+        b.clicked.connect(self._retune)
+        retune.addWidget(QtWidgets.QLabel("Aim")); retune.addWidget(self.tone_k)
+        retune.addWidget(QtWidgets.QLabel("at")); retune.addWidget(self.tone_mz); retune.addWidget(b)
+        self.retune_row = QtWidgets.QWidget(); self.retune_row.setLayout(retune)
+        dl.addRow(self.retune_row)
+
         mode_box = QtWidgets.QGroupBox("Run mode")
         QtWidgets.QVBoxLayout(mode_box).addWidget(self.mode)
-        for w in (self.geom, self.rf, self.ion, mode_box, self.op, self.scan):
+        for w in (self.geom, drive, self.rf, self.ion, mode_box, self.op, self.scan, self.dn, self.dscan):
             self.form_layout.addWidget(w)
         self.form_layout.addStretch(1)
 
@@ -65,6 +103,11 @@ class QuadTab(SimTab):
         self.op.boxes["V"].valueChanged.connect(self._sync_aq)
         self.run_btn.clicked.connect(self.run)
         self._syncing = False
+        self.drive.currentIndexChanged.connect(self._drive_changed)
+        self.store.changed.connect(self._fill_drivers)
+        self.ion.changed.connect(self._driver_info)
+        self.geom.changed.connect(self._driver_info)
+        self._fill_drivers()
         self._mode_changed()
         self._draw_stability(None)
 
@@ -92,8 +135,154 @@ class QuadTab(SimTab):
         self.op.set("a", float(a)); self.op.set("q", float(q))
         self._syncing = False
 
+    # ---- driver ----
+    def _driver(self):
+        return self.store.get(self.drive.currentText()) if self.drive.currentIndex() > 0 else None
+
+    def _fill_drivers(self):
+        cur = self.drive.currentText()
+        self.drive.blockSignals(True)
+        self.drive.clear(); self.drive.addItem(BUILTIN); self.drive.addItems(self.store.names())
+        i = self.drive.findText(cur)
+        self.drive.setCurrentIndex(max(i, 0))
+        self.drive.blockSignals(False)
+        self._drive_changed(keep_wiring=True)
+
+    def _drive_changed(self, *_, keep_wiring=False):
+        d = self._driver()
+        on = d is not None
+        old = {r: cb.currentText() for r, cb in self.rod_box.items()}
+        for rod, cb in self.rod_box.items():
+            cb.blockSignals(True); cb.clear()
+            if on:
+                cb.addItems([o.name for o in d.outputs])
+            cb.setEnabled(on)
+            cb.blockSignals(False)
+        if on:
+            names = [o.name for o in d.outputs]
+            guess = self._guess_wiring(names)
+            for rod, cb in self.rod_box.items():
+                pick = old[rod] if keep_wiring and old[rod] in names else guess[rod]
+                cb.setCurrentIndex(names.index(pick))
+        self.mode.blockSignals(True)
+        m = self.mode.currentIndex()
+        self.mode.clear(); self.mode.addItems(DRIVER_MODES if on else MODES)
+        self.mode.setCurrentIndex(min(m, 1) if on else (2 if m == 1 and self._was_driver else min(m, 2)))
+        self.mode.blockSignals(False)
+        self._was_driver = on
+        self.rf.boxes["freq"].setEnabled(not on)
+        self.retune_row.setVisible(on and bool(d.tones))
+        self._mode_changed()
+        self._driver_info()
+
+    _was_driver = False
+
+    @staticmethod
+    def _guess_wiring(names):
+        """Which output goes on which rod, from the output names."""
+        low = [n.lower() for n in names]
+        def find(*keys, default=0):
+            for k in keys:
+                for i, n in enumerate(low):
+                    if k in n:
+                        return names[i]
+            return names[min(default, len(names) - 1)]
+        x = find("rods a", "(x)", "rods x", "rf+", default=0)
+        y = find("rods b", "(y)", "rods y", "rf-", default=1)
+        return {"x+": find("x+", "x1", default=names.index(x)), "x-": find("x-", "x2", default=names.index(x)),
+                "y+": find("y+", "y1", default=names.index(y)), "y-": find("y-", "y2", default=names.index(y))}
+
+    def _wiring(self):
+        return {rod: cb.currentText() for rod, cb in self.rod_box.items()}
+
+    def _driver_uv(self, d, wiring):
+        """Effective U, V of the driver on the rods (for a, q): rods x at +(U + V cos), y at -(...)."""
+        ph = {}
+        for rod, out in wiring.items():
+            o = d.output(out)
+            ph[rod] = (o.dc, o.rf * np.exp(1j * np.radians(o.rf_phase)))
+        dx = (ph["x+"][0] + ph["x-"][0]) / 2 - (ph["y+"][0] + ph["y-"][0]) / 2
+        px = (ph["x+"][1] + ph["x-"][1]) / 2 - (ph["y+"][1] + ph["y-"][1]) / 2
+        return dx / 2, abs(px) / 2
+
+    def _excitation(self, d, wiring):
+        """'dipolar x', 'dipolar y', 'quadrupolar' or '' from the tone signs on the rods."""
+        s = {rod: d.output(out).tone_sign for rod, out in wiring.items()}
+        if not d.active_tones() or not any(s.values()):
+            return ""
+        if s["x+"] != s["x-"]:
+            return "dipolar x"
+        if s["y+"] != s["y-"]:
+            return "dipolar y"
+        if s["x+"] != s["y+"]:
+            return "quadrupolar"
+        return ""
+
+    def tone_targets(self, d, wiring, r0_eff, zc):
+        """[(tone, [m/z ejected])]: dipolar at f = f_secular, quadrupolar at f = 2 f_secular."""
+        kind = self._excitation(d, wiring)
+        U, V = self._driver_uv(d, wiring)
+        out = []
+        for t in d.active_tones():
+            if kind.startswith("dipolar"):
+                m = mathieu.resonant_mz(t.freq, U, V, r0_eff, d.rf_freq, zc, kind[-1])
+            elif kind == "quadrupolar":
+                m = sorted(mathieu.resonant_mz(t.freq / 2, U, V, r0_eff, d.rf_freq, zc, "x")
+                           + mathieu.resonant_mz(t.freq / 2, U, V, r0_eff, d.rf_freq, zc, "y"))
+            else:
+                m = []
+            m = sorted({round(x, 1) for x in m})           # x and y coincide when U = 0
+            out.append((t, m))
+        return kind, out
+
+    def _driver_info(self, *_):
+        d = self._driver()
+        if d is None:
+            self.drive_info.setText("Rods x at +(U + V cos Ωt), rods y at −(U + V cos Ωt). "
+                                    "Pick a driver to add excitation tones.")
+            return
+        w = self._wiring()
+        i = self.ion.values()
+        U, V = self._driver_uv(d, w)
+        a, q = mathieu.aq(U, V, i["mass"], self._r0_eff(), d.rf_freq, i["z"])
+        kind, tt = self.tone_targets(d, w, self._r0_eff(), i["z"])
+        lines = [f"RF {d.rf_freq / 1e3:g} kHz, U = {U:.2f} V, V = {V:.2f} V → m/z {i['mass']:g}: a = {a:.4f}, q = {q:.4f}"]
+        if kind:
+            lines.append(f"<b>{kind.capitalize()} excitation</b>, each tone ejects:")
+            for k, (t, ms) in enumerate(tt):
+                lines.append(f"&nbsp;&nbsp;tone {d.tones.index(t) + 1}: {t.freq / 1e3:g} kHz, {t.amp:g} V → "
+                             + (", ".join(f"m/z {m:.0f}" for m in ms) if ms else "no stable m/z"))
+        elif d.active_tones():
+            lines.append("Tones are not applied to the rods (Tones × is 0 or the same on every rod).")
+        self.drive_info.setText("<br>".join(lines))
+
+    def _retune(self):
+        d = self._driver()
+        if d is None or not d.tones:
+            return
+        k = self.tone_k.value() - 1
+        if k >= len(d.tones):
+            self.log(f"{d.name} has only {len(d.tones)} tones.")
+            return
+        w, i = self._wiring(), self.ion.values()
+        kind = self._excitation(d, w) or "quadrupolar"
+        U, V = self._driver_uv(d, w)
+        fx, fy = mathieu.secular_freqs(U, V, self.tone_mz.value(), self._r0_eff(), d.rf_freq, i["z"])
+        f = {"dipolar x": fx, "dipolar y": fy}.get(kind, 2 * fx)
+        if not np.isfinite(f):
+            self.log(f"m/z {self.tone_mz.value():g} is not stable at these voltages: no secular frequency.")
+            return
+        d.tones[k].freq = float(f)
+        self.log(f"{d.name}: tone {k + 1} set to {f / 1e3:.3f} kHz ({kind}, aims at m/z {self.tone_mz.value():g})")
+        self.store.touch()
+
     def _mode_changed(self):
         m = self.mode.currentIndex()
+        drv = self._driver() is not None
+        self.dn.setVisible(drv and m == 0); self.dscan.setVisible(drv and m == 1)
+        if drv:
+            self.op.setVisible(False); self.scan.setVisible(False)
+            return
         self.op.setVisible(m in (0, 1)); self.scan.setVisible(m == 2)
         for k in ("a", "q"):
             self.op.boxes[k].setEnabled(m == 0)
@@ -106,6 +295,9 @@ class QuadTab(SimTab):
         mode = self.mode.currentIndex()
         key = (g["r0"], g["ratio"], g["div"])
         cache = self.cache
+        drv = self._driver()
+        drv = drv.copy() if drv is not None else None       # the run keeps its own copy
+        wiring, ds, dn = self._wiring(), self.dscan.values(), self.dn.values()
 
         def job(progress):
             out = {"mode": mode, "g": g, "r": r, "i": i}
@@ -113,9 +305,9 @@ class QuadTab(SimTab):
             if key not in cache:
                 t = time.time()
                 progress(0.02)
-                grid = quadrupole_rods(r0, rod_ratio=g["ratio"], dx=r0 / g["div"])
+                grid = quadrupole_rods(r0, rod_ratio=g["ratio"], dx=r0 / g["div"], split=True)
                 basis = solve_basis(grid)
-                static = GridField2D(grid, basis, {"A": 1.0, "B": -1.0})
+                static = GridField2D(grid, basis, {"x+": 1.0, "x-": 1.0, "y+": -1.0, "y-": -1.0})
                 p = np.array([[0.1 * r0, 0, 0]])
                 ratio = static.efield(0, p)[0, 0] / IdealQuadField(r0, 1.0).efield(0, p)[0, 0]
                 cache[key] = (grid, basis, r0 / np.sqrt(ratio))
@@ -131,7 +323,11 @@ class QuadTab(SimTab):
 
             def field(U, V):
                 phi0 = rf_dc(U, V, freq)
-                return GridField2D(grid, basis, {"A": phi0, "B": lambda tt: -phi0(tt)})
+                neg = lambda tt: -phi0(tt)
+                return GridField2D(grid, basis, {"x+": phi0, "x-": phi0, "y+": neg, "y-": neg})
+
+            if drv is not None:
+                return self._driver_job(out, drv, wiring, grid, basis, r0_eff, i, o, ds, dn, L, rng, progress)
 
             if mode in (0, 1):
                 if mode == 0:
@@ -161,6 +357,42 @@ class QuadTab(SimTab):
 
         self.start(job, self._show, "Solving field and flying ions..." if key not in cache else "Flying ions...")
 
+    def _driver_job(self, out, d, wiring, grid, basis, r0_eff, i, o, ds, dn, L, rng, progress):
+        """Fly with a driver's waveforms on the rods."""
+        f_rf = d.rf_freq
+        steps = self.rf.values()["steps"]
+        fmax = max(d.max_freq(), f_rf)
+        dt = 1 / fmax / steps
+        volts = {rod: (lambda tt, name=name: float(d.waveform(name, tt))) for rod, name in wiring.items()}
+        fld = GridField2D(grid, basis, volts)
+        U, V = self._driver_uv(d, wiring)
+        zc = i["z"]
+        kind, targets = self.tone_targets(d, wiring, r0_eff, zc)
+        out.update(driver=d, U=U, V=V, kind=kind, targets=targets, f_rf=f_rf)
+        if out["mode"] == 0:
+            mass = i["mass"]
+            v_ax = np.sqrt(2 * i["energy"] * E_CHARGE * zc / (mass * AMU))
+            a, q = mathieu.aq(U, V, mass, r0_eff, f_rf, zc)
+            ions = make_beam(int(dn["n"]), mass, zc, i["energy"], i["radius"] * 1e-3, i["angle"],
+                             birth_window=1 / f_rf, rng=rng)
+            res = Simulation([fld], z_end=L).run(ions, dt, 3 * L / v_ax + 1 / f_rf,
+                                                record_every=max(1, int(2 * fmax / f_rf)), rng=rng, progress=progress)
+            out.update(a=float(a), q=float(q), res=res, stable=bool(mathieu.is_stable(a, q)), mode=0)
+            return out
+        m1, m2 = sorted((ds["m1"], ds["m2"]))
+        masses = np.geomspace(m1, m2, int(ds["npts"]))
+        hits = [m for _, ms in targets for m in ms if m1 <= m <= m2]
+        masses = np.unique(np.concatenate([masses, hits]))       # make sure every notch is sampled
+        per = int(ds["per"])
+        ions = make_beam(per * len(masses), np.repeat(masses, per), zc, i["energy"],
+                         i["radius"] * 1e-3, i["angle"], birth_window=1 / f_rf, rng=rng)
+        v_min = np.sqrt(2 * i["energy"] * E_CHARGE * zc / (masses.max() * AMU))
+        res = Simulation([fld], z_end=L).run(ions, dt, 1.05 * L / v_min + 1 / f_rf, rng=rng, progress=progress)
+        T = (res.status == 1).reshape(len(masses), per).mean(axis=1)
+        a_m, q_m = mathieu.aq(U, V, masses, r0_eff, f_rf, zc)
+        out.update(masses=masses, T=T, a_m=a_m, q_m=q_m, pred=mathieu.is_stable(a_m, q_m), mode=2, r0_eff=r0_eff, zc=zc)
+        return out
+
     # ---- display ----
     def _show(self, out):
         if "solve_time" in out:
@@ -168,6 +400,9 @@ class QuadTab(SimTab):
                      f"effective r0 = {out['r0_eff'] * 1e3:.4f} mm")
             self._sync_op()
         self._draw_potential(out)
+        if "driver" in out:
+            self.log(f"Driver '{out['driver'].name}'" + (f", {out['kind']} excitation with "
+                     f"{len(out['targets'])} tones" if out["kind"] else ""))
         if out["mode"] in (0, 1):
             res = out["res"]
             self.log(f"U = {out['U']:.2f} V, V = {out['V']:.2f} V -> a = {out['a']:.4f}, q = {out['q']:.4f} "
@@ -191,12 +426,14 @@ class QuadTab(SimTab):
                                [[m[k], T[k], out["a_m"][k], out["q_m"][k], int(pred[k])] for k in range(len(m))])
             self._draw_stability(list(zip(out["q_m"], out["a_m"])), T)
             self._draw_scan(out)
+            if "driver" in out:
+                self._draw_excitation(out)
 
     def _draw_potential(self, out):
         grid = out["grid"]
         fig = self.plots.fig("Potential", show=False)
         ax = fig.add_subplot(111)
-        pot = GridField2D(grid, out["basis"], {"A": 1.0, "B": -1.0}).potential(0)
+        pot = GridField2D(grid, out["basis"], {"x+": 1.0, "x-": 1.0, "y+": -1.0, "y-": -1.0}).potential(0)
         m = grid.electrode > 0
         cs = ax.contourf(grid.X * 1e3, grid.Y * 1e3, np.ma.masked_where(m, pot), 41, cmap="RdBu_r")
         ax.contourf(grid.X * 1e3, grid.Y * 1e3, m, levels=[0.5, 1.5], colors="0.45")
@@ -255,6 +492,35 @@ class QuadTab(SimTab):
         ax.plot(out["masses"], out["T"] * 100, "o-", ms=3, label="simulated")
         ax.fill_between(out["masses"], 0, out["pred"] * 100, color="C1", alpha=0.2, step="mid",
                         label="Mathieu-stable (ideal)")
-        ax.set_xlabel("m/z"); ax.set_ylabel("transmission (%)"); ax.legend()
-        ax.set_title(f"U = {out['U']:.1f} V, V = {out['V']:.1f} V")
+        if "driver" in out:
+            ax.set_xscale("log")
+            for k, (t, ms) in enumerate(out["targets"]):
+                for m in ms:
+                    if out["masses"].min() <= m <= out["masses"].max():
+                        ax.axvline(m, color="C3", lw=0.8, ls="--")
+                        ax.text(m, 103, f"{k + 1}", color="C3", ha="center", fontsize=7)
+            ax.plot([], [], color="C3", ls="--", lw=0.8, label="tone resonances (numbered)")
+        ax.set_xlabel("m/z"); ax.set_ylabel("transmission (%)"); ax.legend(fontsize=8)
+        ax.set_title(f"U = {out['U']:.1f} V, V = {out['V']:.1f} V" +
+                     (f", driver '{out['driver'].name}'" if "driver" in out else ""))
         self.plots.draw("Mass scan")
+
+    def _draw_excitation(self, out):
+        """Secular frequencies against m/z with the tones on top: where they cross, ions are ejected."""
+        d, m = out["driver"], np.geomspace(out["masses"].min(), out["masses"].max(), 600)
+        fx, fy = mathieu.secular_freqs(out["U"], out["V"], m, out["r0_eff"], out["f_rf"], out["zc"])
+        fig = self.plots.fig("Excitation", show=False)
+        ax = fig.add_subplot(111)
+        ax.plot(m, fx / 1e3, "C0", label="secular f_x")
+        ax.plot(m, fy / 1e3, "C1", label="secular f_y")
+        if out["kind"] == "quadrupolar":
+            ax.plot(m, 2 * fx / 1e3, "C0--", lw=0.8, label="2 f_x (quadrupolar resonance)")
+            ax.plot(m, 2 * fy / 1e3, "C1--", lw=0.8, label="2 f_y")
+        for k, (t, ms) in enumerate(out["targets"]):
+            ax.axhline(t.freq / 1e3, color="C3", lw=0.8)
+            ax.text(m[-1], t.freq / 1e3, f" tone {k + 1}", color="C3", va="center", fontsize=7)
+        ax.set_xscale("log"); ax.set_xlabel("m/z"); ax.set_ylabel("frequency (kHz)")
+        ax.set_title(f"Tones (red) against secular frequencies: crossings are ejected ({out['kind'] or 'no'} excitation)",
+                     fontsize=9)
+        ax.legend(fontsize=8)
+        self.plots.draw("Excitation")
