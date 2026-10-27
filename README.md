@@ -1,10 +1,12 @@
 # ionsim — a SIMION-style ion simulator in Python
 
-Prototype 1: quadrupole mass filter (four round rods, RF + DC).
+* Prototype 1: quadrupole mass filter (four round rods, RF + DC).
+* Prototype 2: TWAVE traveling-wave (TW) ion mobility separation.
 
 ```
 pip install -r requirements.txt
-python examples/quad_demo.py      # ~1 min, writes PNGs to out/
+python examples/quad_demo.py      # ~1 min, writes PNGs 1-4 to out/
+python examples/twave_demo.py      # a few min, writes PNGs 5-8 to out/
 ```
 
 ## How it works (same idea as SIMION)
@@ -45,3 +47,14 @@ The integrator already has the three hooks needed:
 3. **Optional viscous drag shortcut** → a `forces` entry with mobility K: a = (q/m)E − v/τ, fast for high pressure.
 
 Outputs to add then: transit time distributions, energy thermalisation, CID energy, and transmission vs pressure.
+
+## TWAVE traveling-wave separation (`ionsim/twave.py`)
+
+* **Boards and electrodes:** two boards `gap` apart, TW electrodes at `pitch` with `width`, 8 per wavelength, 4 on / 4 off, stepped one electrode every pitch/speed. The field between boards comes from an exact Fourier (Laplace) solution of the periodic electrode pattern, with a linear ramp across the insulating gaps.
+* **Ion motion:** 4 Torr is the mobility regime, so ions follow dz = K·E dt + √(2D dt)·N(0,1), with K from K0, pressure and temperature, and D from the Einstein relation.
+* **Validation:** for an ideal sine wave the mean velocity must follow theory, s for surfing (c ≥ s) and s − √(s² − c²) for rolling over, where c = K·Emax.
+* **Demo:** two ions with K0 = 1.00 and 1.03 cm²/Vs over 1 m at 30 V and 200 m/s in N2, plus resolution against wave speed.
+
+Defaults: pitch 0.508 mm, width 0.432 mm, gap 2.75 mm, 30 V, 200 m/s, 4 Torr N2, 300 K.
+
+Not modelled yet: the RF guard confinement across the device (ions ride the midplane), turns, space charge, high-field mobility (E/N dependence), and real ion injection or trapping. A 13 m serpentine is just a longer `PATH`, and the run time grows with it.
