@@ -125,7 +125,8 @@ def fly_mobility(tw, K, z0, z_end, dt, t_max, temp_k=300.0, charge_state=1,
         from types import SimpleNamespace
         from .heating import HeatTracker
         mass = np.broadcast_to(np.asarray(mz, float), (n,)) * charge_state * AMU
-        ions = SimpleNamespace(mass=mass, charge=np.full(n, charge_state * E_CHARGE), K=K.copy(), vel=np.zeros((n, 3)))
+        charge = np.broadcast_to(np.asarray(charge_state, float), (n,)) * E_CHARGE
+        ions = SimpleNamespace(mass=mass, charge=charge, K=K.copy(), vel=np.zeros((n, 3)))
         heat = HeatTracker(heating, ions, temp_k, float(z.min()), z_end, None)
         zero_c = np.zeros(n)
     t, step = 0.0, 0

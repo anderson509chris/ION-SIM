@@ -5,6 +5,8 @@ from PySide6 import QtWidgets
 from ..twave import TWBoards, mobility, fly_mobility, mean_velocity_sine, fwhm
 from .common import ParamForm, SimTab
 from .heating_view import HeatingBox, draw_heating
+from .ion_table import IonTable, species_color
+from ..ions import IonSpecies
 
 MODES = ["Separation", "Wave-speed sweep", "Velocity vs theory"]
 
@@ -29,16 +31,14 @@ class TwaveTab(SimTab):
             ("p", "Pressure", 4.0, 0.01, 760, 3, 0.1, "Torr"),
             ("T", "Temperature", 300.0, 1, 1000, 1, 5, "K"),
         ])
-        self.ions = ParamForm("Ions", [
-            ("n", "Ions per species", 500, 10, 100000, 0, 100, ""),
+        self.ion_table = IonTable("Ions (one row per species, separated together)",
+                                  [IonSpecies("K0 1.00", 500, 1, 1.00, 500), IonSpecies("K0 1.03", 500, 1, 1.03, 500)])
+        self.ion_table.setToolTip("K0 sets the drift; m/z and z set diffusion and ion heating. "
+                                  "The velocity check uses the first row's count and charge.")
+        self.ions = ParamForm("Path and time step", [
             ("path", "Path length", 1.0, 0.01, 100, 3, 0.1, "m"),
             ("dt", "Time step", 0.1, 0.001, 10, 3, 0.01, "us"),
-            ("z", "Charge state", 1, 1, 100, 0, 1, ""),
-            ("mz", "m/z (for ion heating)", 500, 1, 1e6, 1, 10, ""),
         ])
-        self.k0 = QtWidgets.QLineEdit("1.00, 1.03")
-        self.k0.setToolTip("Reduced mobilities K0 in cm^2/Vs, comma separated - one per species")
-        self.ions.layout().insertRow(0, "K0 list (cm²/Vs)", self.k0)
         self.mode = QtWidgets.QComboBox(); self.mode.addItems(MODES)
         mode_box = QtWidgets.QGroupBox("Run mode")
         QtWidgets.QVBoxLayout(mode_box).addWidget(self.mode)
@@ -50,7 +50,7 @@ class TwaveTab(SimTab):
         self.heat = HeatingBox()
         self.heat.setToolTip("Tracks each ion's effective temperature from its drift K·E through the gas, "
                              "and its internal temperature (Separation mode)")
-        for w in (self.boards, self.wave, self.gas, self.ions, self.heat, mode_box, self.sweep):
+        for w in (self.boards, self.wave, self.gas, self.ion_table, self.ions, self.heat, mode_box, self.sweep):
             self.form_layout.addWidget(w)
         self.form_layout.addStretch(1)
         self.mode.currentIndexChanged.connect(lambda i: self.sweep.setVisible(i == 1))
@@ -67,11 +67,6 @@ class TwaveTab(SimTab):
                         gap=b["gap"] * 1e-3, n_per_wave=b["nwave"], n_on=min(b["non"], b["nwave"] - 1),
                         amplitude=w["amp"], speed=speed or w["speed"], waveform=self.waveform.currentText())
 
-    def _k0s(self):
-        vals = [float(x) for x in self.k0.text().replace(";", ",").split(",") if x.strip()]
-        if not vals:
-            raise ValueError("Enter at least one K0 value")
-        return vals
 
     def _draw_field(self):
         try:
@@ -92,40 +87,42 @@ class TwaveTab(SimTab):
 
     def run(self):
         try:
-            k0s = self._k0s()
+            species = [sp for sp in self.ion_table.species() if sp.n > 0]
             tw = self._tw()
         except Exception as e:
             self.log(f"Input error: {e}")
             return
         g, io, sw, mode = self.gas.values(), self.ions.values(), self.sweep.values(), self.mode.currentIndex()
-        n, path, dt, zc = int(io["n"]), io["path"], io["dt"] * 1e-6, int(io["z"])
+        k0s, names = [sp.K0 for sp in species], [sp.name for sp in species]
+        counts = [sp.n for sp in species]
+        n, path, dt, zc = species[0].n, io["path"], io["dt"] * 1e-6, species[0].z
         Ks = [mobility(k, g["p"], g["T"]) for k in k0s]
-        heat_model, mz = self.heat.model(), io["mz"]
+        heat_model = self.heat.model()
 
-        def separate(tw, path, n, progress, heating=None):
-            K = np.repeat(Ks, n)
-            species = np.repeat(np.arange(len(Ks)), n)
+        def separate(tw, path, counts, progress, heating=None):
+            sp = np.repeat(np.arange(len(Ks)), counts)
+            K = np.asarray(Ks)[sp]
             z0 = np.random.default_rng().random(len(K)) * tw.wavelength
             v_slow = max(float(mean_velocity_sine(min(Ks) * tw.e_max, tw.speed)), 0.02 * tw.speed)
-            r = fly_mobility(tw, K, z0, path, dt, 3 * path / v_slow, g["T"], zc, species, progress=progress,
-                             heating=heating, mz=mz)
-            arr = [r.arrival[species == s] for s in range(len(Ks))]
-            return (arr, r.heat, species) if heating is not None else arr
+            r = fly_mobility(tw, K, z0, path, dt, 3 * path / v_slow, g["T"], np.array([s.z for s in species])[sp], sp,
+                             progress=progress, heating=heating, mz=np.array([s.mz for s in species])[sp])
+            species_i = sp
+            arr = [r.arrival[species_i == s] for s in range(len(Ks))]
+            return (arr, r.heat, species_i) if heating is not None else arr
 
         def job(progress):
-            out = {"mode": mode, "k0s": k0s, "Ks": Ks, "tw": tw, "path": path}
+            out = {"mode": mode, "k0s": k0s, "names": names, "Ks": Ks, "tw": tw, "path": path}
             if mode == 0:
                 if heat_model is not None:
-                    out["t"], out["heat"], out["species"] = separate(tw, path, n, progress, heat_model)
+                    out["t"], out["heat"], out["species"] = separate(tw, path, counts, progress, heat_model)
                 else:
-                    out["t"] = separate(tw, path, n, progress)
-                out["mz"] = mz
+                    out["t"] = separate(tw, path, counts, progress)
             elif mode == 1:
                 speeds = np.linspace(sw["s0"], sw["s1"], int(sw["ns"]))
                 out["speeds"], out["sweep"] = speeds, []
                 for j, s in enumerate(speeds):
                     sub = lambda f, j=j: progress((j + f) / len(speeds))
-                    out["sweep"].append(separate(self._tw(s), path, n, sub))
+                    out["sweep"].append(separate(self._tw(s), path, counts, sub))
                     if progress((j + 1) / len(speeds)):
                         out["speeds"] = speeds[: j + 1]
                         break
@@ -154,17 +151,17 @@ class TwaveTab(SimTab):
         return means, widths, rpp
 
     def _show(self, out):
-        k0s, mode = out["k0s"], out["mode"]
+        k0s, names, mode = out["k0s"], out["names"], out["mode"]
         if mode == 0:
             t = out["t"]
             means, widths, rpp = self._stats(t, k0s)
-            for k0, x, m, w in zip(k0s, t, means, widths):
-                self.log(f"K0 {k0:.4f}: arrival {m * 1e3:.3f} ms, FWHM {w * 1e3:.3f} ms, "
+            for name, k0, x, m, w in zip(names, k0s, t, means, widths):
+                self.log(f"{name} (K0 {k0:.4f}): arrival {m * 1e3:.3f} ms, FWHM {w * 1e3:.3f} ms, "
                          f"resolving power {m / w:.0f}, arrived {np.isfinite(x).mean():.0%}")
             for j, r in enumerate(rpp):
-                self.log(f"Rpp(K0 {k0s[j]} vs {k0s[j + 1]}) = {r:.2f}")
+                self.log(f"Rpp({names[j]} vs {names[j + 1]}) = {r:.2f}")
             self.last_table = (["species", "K0", "arrival_s"],
-                               [[s, k0s[s], v] for s in range(len(t)) for v in t[s]])
+                               [[names[s], k0s[s], v] for s in range(len(t)) for v in t[s]])
             fig = self.plots.fig("Arrival times")
             ax = fig.add_subplot(111)
             allt = np.concatenate([x[np.isfinite(x)] for x in t])
@@ -173,8 +170,8 @@ class TwaveTab(SimTab):
                 step = out["tw"].step_time
                 bw = step * max(1, int(np.ceil((allt.max() - allt.min()) / 80 / step)))
                 bins = np.arange(allt.min(), allt.max() + bw, bw) * 1e3
-                for x, k0 in zip(t, k0s):
-                    ax.hist(x[np.isfinite(x)] * 1e3, bins=bins, alpha=0.6, label=f"K0 = {k0}")
+                for k, (x, name) in enumerate(zip(t, names)):
+                    ax.hist(x[np.isfinite(x)] * 1e3, bins=bins, alpha=0.6, color=species_color(k), label=name)
             ax.set_xlabel("arrival time (ms)"); ax.set_ylabel("ions"); ax.legend()
             ax.set_title(f"{out['path']} m, {out['tw'].amplitude:.0f} V, {out['tw'].speed:.0f} m/s" +
                          (f", Rpp = {', '.join(f'{r:.2f}' for r in rpp)}" if rpp else ""))
@@ -182,10 +179,10 @@ class TwaveTab(SimTab):
             self._draw_velocity(out, None)
             h = out.get("heat")
             if h is not None:
-                for s, k0 in enumerate(k0s):
-                    self.log(f"  Heating K0 {k0}: " + h.summary(out["species"] == s))
+                for s, name in enumerate(names):
+                    self.log(f"  Heating {name}: " + h.summary(out["species"] == s))
             draw_heating(self.plots.figs["Heating"], h,
-                         title=f"m/z {out['mz']:g}, {out['tw'].amplitude:.0f} V at {out['tw'].speed:.0f} m/s: "
+                         title=f"{', '.join(names)}, {out['tw'].amplitude:.0f} V at {out['tw'].speed:.0f} m/s: "
                                "ion heating along the path")
             self.plots.draw("Heating")
         elif mode == 1:
@@ -196,16 +193,16 @@ class TwaveTab(SimTab):
                 rows.append([s] + means + rpp)
                 self.log(f"speed {s:.0f} m/s: arrivals " + ", ".join(f"{m * 1e3:.2f}" for m in means) + " ms"
                          + (f"; Rpp " + ", ".join(f"{r:.2f}" for r in rpp) if rpp else ""))
-            self.last_table = (["speed_m_s"] + [f"t_K0_{k}" for k in k0s] +
-                               [f"Rpp_{k0s[j]}_{k0s[j + 1]}" for j in range(len(k0s) - 1)], rows)
+            self.last_table = (["speed_m_s"] + [f"t_{nm}" for nm in names] +
+                               [f"Rpp_{names[j]}_{names[j + 1]}" for j in range(len(names) - 1)], rows)
             fig = self.plots.fig("Speed sweep")
             ax1, ax2 = fig.subplots(1, 2)
             sp = out["speeds"][: len(curves)]
-            for j, k0 in enumerate(k0s):
-                ax1.plot(sp, [c[0][j] * 1e3 for c in curves], "o-", label=f"K0 = {k0}")
+            for j, name in enumerate(names):
+                ax1.plot(sp, [c[0][j] * 1e3 for c in curves], "o-", color=species_color(j), label=name)
                 ax1.set_xlabel("wave speed (m/s)"); ax1.set_ylabel("arrival time (ms)"); ax1.legend(fontsize=8)
             for j in range(len(k0s) - 1):
-                ax2.plot(sp, [c[2][j] for c in curves], "o-", label=f"{k0s[j]} vs {k0s[j + 1]}")
+                ax2.plot(sp, [c[2][j] for c in curves], "o-", label=f"{names[j]} vs {names[j + 1]}")
             ax2.set_xlabel("wave speed (m/s)"); ax2.set_ylabel("Rpp"); ax2.set_title("two-peak resolution")
             if len(k0s) > 1:
                 ax2.legend(fontsize=8)
@@ -223,10 +220,10 @@ class TwaveTab(SimTab):
         ax.plot(cs, mean_velocity_sine(cs * tw.speed, tw.speed) / tw.speed, "k-", label="theory (sine wave)")
         if sim is not None:
             ax.plot(sim[0], sim[1] / tw.speed, "s", label=f"simulated ({tw.waveform})")
-        for k0, K in zip(out["k0s"], out["Ks"]):
+        for k, (name, K) in enumerate(zip(out["names"], out["Ks"])):
             c = K * tw.e_max / tw.speed
-            ax.axvline(c, ls=":", lw=1)
-            ax.text(c, 0.03, f" K0={k0}", rotation=90, fontsize=8, va="bottom")
+            ax.axvline(c, ls=":", lw=1, color=species_color(k))
+            ax.text(c, 0.03, f" {name}", rotation=90, fontsize=8, va="bottom")
         ax.set_xlabel("c / s  (K·Emax / wave speed)"); ax.set_ylabel("mean velocity / wave speed")
         ax.set_title("Surfing (c ≥ s) vs rolling over (c < s)"); ax.legend(fontsize=8)
         self.plots.draw("Ion velocity")

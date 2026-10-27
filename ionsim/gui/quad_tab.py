@@ -7,11 +7,12 @@ from ..constants import AMU, E_CHARGE
 from ..geometry import quadrupole_rods
 from ..solver import solve_basis
 from ..fields import GridField2D, IdealQuadField, rf_dc
-from ..ions import make_beam
+from ..ions import make_beam, IonSpecies, expand
 from ..integrator import Simulation
 from .. import mathieu
 from .common import ParamForm, SimTab
 from .driver_store import get_store
+from .ion_table import IonTable, path_style, fate_caption, species_legend, species_stats, species_color
 
 MODES = ["Trajectories at (a, q)", "Trajectories at (U, V)", "Mass scan"]
 DRIVER_MODES = ["Trajectories at the ion m/z", "Transmission vs m/z (excitation scan)"]
@@ -33,9 +34,9 @@ class QuadTab(SimTab):
             ("freq", "Frequency", 1.0, 0.01, 100, 4, 0.1, "MHz"),
             ("steps", "Steps per RF cycle", 40, 10, 400, 0, 5, ""),
         ])
-        self.ion = ParamForm("Ions", [
-            ("mass", "m/z", 500, 1, 1e6, 2, 1, ""),
-            ("z", "Charge state", 1, 1, 100, 0, 1, ""),
+        self.ion_table = IonTable("Ions (one row per species; the first sets the operating point and scans)",
+                                  [IonSpecies("m/z 500", 500, 1, 1.0, 20)], columns=("name", "mz", "z", "n"))
+        self.ion = ParamForm("Beam", [
             ("energy", "Axial energy", 5.0, 0.01, 1000, 2, 0.5, "eV"),
             ("radius", "Beam radius", 0.3, 0.0, 10, 3, 0.05, "mm"),
             ("angle", "Beam half-angle", 1.0, 0.0, 30, 2, 0.25, "deg"),
@@ -46,7 +47,6 @@ class QuadTab(SimTab):
             ("q", "q", 0.70, 0, 2, 4, 0.005, ""),
             ("U", "U (DC)", 82.6, -1e5, 1e5, 2, 1, "V"),
             ("V", "V (RF 0-peak)", 578.3, 0, 1e5, 2, 5, "V"),
-            ("n", "Ions", 20, 1, 5000, 0, 5, ""),
         ])
         self.scan = ParamForm("Mass scan", [
             ("aq", "Scan line a/q", 0.332, 0.0, 0.3357, 4, 0.001, ""),
@@ -60,7 +60,6 @@ class QuadTab(SimTab):
             ("npts", "Masses (log spaced)", 60, 3, 400, 0, 5, ""),
             ("per", "Ions per mass", 30, 5, 5000, 0, 5, ""),
         ])
-        self.dn = ParamForm("Ions to fly", [("n", "Ions", 20, 1, 5000, 0, 5, "")])
 
         # ---- drive: built-in RF/DC or a driver from the Drivers tab ----
         drive = QtWidgets.QGroupBox("Drive")
@@ -89,13 +88,13 @@ class QuadTab(SimTab):
 
         mode_box = QtWidgets.QGroupBox("Run mode")
         QtWidgets.QVBoxLayout(mode_box).addWidget(self.mode)
-        for w in (self.geom, drive, self.rf, self.ion, mode_box, self.op, self.scan, self.dn, self.dscan):
+        for w in (self.geom, drive, self.rf, self.ion_table, self.ion, mode_box, self.op, self.scan, self.dscan):
             self.form_layout.addWidget(w)
         self.form_layout.addStretch(1)
 
         self.cache = {}            # geometry key -> (grid, basis, r0_eff)
         self.mode.currentIndexChanged.connect(self._mode_changed)
-        for f in (self.geom, self.rf, self.ion):
+        for f in (self.geom, self.rf, self.ion, self.ion_table):
             f.changed.connect(self._sync_op)
         self.op.boxes["a"].valueChanged.connect(self._sync_op)
         self.op.boxes["q"].valueChanged.connect(self._sync_op)
@@ -105,11 +104,23 @@ class QuadTab(SimTab):
         self._syncing = False
         self.drive.currentIndexChanged.connect(self._drive_changed)
         self.store.changed.connect(self._fill_drivers)
-        self.ion.changed.connect(self._driver_info)
+        self.ion_table.changed.connect(self._driver_info)
         self.geom.changed.connect(self._driver_info)
         self._fill_drivers()
         self._mode_changed()
         self._draw_stability(None)
+
+    def _ion_values(self):
+        """Beam settings plus the reference ion (first row). a and q depend only on m/z, so the
+        Mathieu maths uses "mass" = m/z with charge 1; the beam itself uses each ion's real
+        mass and charge."""
+        i = self.ion.values()
+        try:
+            ref = self.ion_table.first()
+        except ValueError:
+            ref = IonSpecies()
+        i.update(mass=ref.mz, z=1, ref=ref)
+        return i
 
     # ---- keep (a, q) and (U, V) consistent ----
     def _r0_eff(self):
@@ -121,7 +132,7 @@ class QuadTab(SimTab):
         if self._syncing or self.mode.currentIndex() == 1:
             return
         self._syncing = True
-        o, r, i = self.op.values(), self.rf.values(), self.ion.values()
+        o, r, i = self.op.values(), self.rf.values(), self._ion_values()
         U, V = mathieu.voltages_for(o["a"], o["q"], i["mass"], self._r0_eff(), r["freq"] * 1e6, i["z"])
         self.op.set("U", U); self.op.set("V", V)
         self._syncing = False
@@ -130,7 +141,7 @@ class QuadTab(SimTab):
         if self._syncing or self.mode.currentIndex() != 1:
             return
         self._syncing = True
-        o, r, i = self.op.values(), self.rf.values(), self.ion.values()
+        o, r, i = self.op.values(), self.rf.values(), self._ion_values()
         a, q = mathieu.aq(o["U"], o["V"], i["mass"], self._r0_eff(), r["freq"] * 1e6, i["z"])
         self.op.set("a", float(a)); self.op.set("q", float(q))
         self._syncing = False
@@ -242,7 +253,7 @@ class QuadTab(SimTab):
                                     "Pick a driver to add excitation tones.")
             return
         w = self._wiring()
-        i = self.ion.values()
+        i = self._ion_values()
         U, V = self._driver_uv(d, w)
         a, q = mathieu.aq(U, V, i["mass"], self._r0_eff(), d.rf_freq, i["z"])
         kind, tt = self.tone_targets(d, w, self._r0_eff(), i["z"])
@@ -264,7 +275,7 @@ class QuadTab(SimTab):
         if k >= len(d.tones):
             self.log(f"{d.name} has only {len(d.tones)} tones.")
             return
-        w, i = self._wiring(), self.ion.values()
+        w, i = self._wiring(), self._ion_values()
         kind = self._excitation(d, w) or "quadrupolar"
         U, V = self._driver_uv(d, w)
         fx, fy = mathieu.secular_freqs(U, V, self.tone_mz.value(), self._r0_eff(), d.rf_freq, i["z"])
@@ -279,7 +290,7 @@ class QuadTab(SimTab):
     def _mode_changed(self):
         m = self.mode.currentIndex()
         drv = self._driver() is not None
-        self.dn.setVisible(drv and m == 0); self.dscan.setVisible(drv and m == 1)
+        self.dscan.setVisible(drv and m == 1)
         if drv:
             self.op.setVisible(False); self.scan.setVisible(False)
             return
@@ -291,13 +302,19 @@ class QuadTab(SimTab):
 
     # ---- run ----
     def run(self):
-        g, r, i, o, s = (f.values() for f in (self.geom, self.rf, self.ion, self.op, self.scan))
+        g, r, o, s = (f.values() for f in (self.geom, self.rf, self.op, self.scan))
+        i = self._ion_values()
+        try:
+            species = [sp for sp in self.ion_table.species() if sp.n > 0]
+        except ValueError as e:
+            self.log(f"Input error: {e}")
+            return
         mode = self.mode.currentIndex()
         key = (g["r0"], g["ratio"], g["div"])
         cache = self.cache
         drv = self._driver()
         drv = drv.copy() if drv is not None else None       # the run keeps its own copy
-        wiring, ds, dn = self._wiring(), self.dscan.values(), self.dn.values()
+        wiring, ds = self._wiring(), self.dscan.values()
 
         def job(progress):
             out = {"mode": mode, "g": g, "r": r, "i": i}
@@ -317,7 +334,8 @@ class QuadTab(SimTab):
             freq = r["freq"] * 1e6
             dt = 1 / freq / r["steps"]
             mass, zc = i["mass"], i["z"]
-            v_ax = np.sqrt(2 * i["energy"] * E_CHARGE * zc / (mass * AMU))
+            ref_z = i["ref"].z
+            out["species"] = species
             L = g["length"] * 1e-3
             rng = np.random.default_rng()
 
@@ -327,7 +345,7 @@ class QuadTab(SimTab):
                 return GridField2D(grid, basis, {"x+": phi0, "x-": phi0, "y+": neg, "y-": neg})
 
             if drv is not None:
-                return self._driver_job(out, drv, wiring, grid, basis, r0_eff, i, o, ds, dn, L, rng, progress)
+                return self._driver_job(out, drv, wiring, grid, basis, r0_eff, i, o, ds, species, L, rng, progress)
 
             if mode in (0, 1):
                 if mode == 0:
@@ -335,18 +353,16 @@ class QuadTab(SimTab):
                 else:
                     U, V = o["U"], o["V"]
                 a, q = mathieu.aq(U, V, mass, r0_eff, freq, zc)
-                ions = make_beam(int(o["n"]), mass, zc, i["energy"], i["radius"] * 1e-3, i["angle"],
-                                 birth_window=1 / freq, rng=rng)
-                res = Simulation([field(U, V)], z_end=L).run(ions, dt, 3 * L / v_ax + 1 / freq,
-                                                            record_every=2, rng=rng, progress=progress)
+                ions, res = self._fly_species(species, i, field(U, V), dt, L, 1 / freq, 2, rng, progress)
                 out.update(U=U, V=V, a=float(a), q=float(q), res=res, stable=bool(mathieu.is_stable(a, q)))
+                out["aq"] = [tuple(float(x) for x in mathieu.aq(U, V, sp.mz, r0_eff, freq, 1)) for sp in species]
             else:
                 U, V = mathieu.voltages_for(s["aq"] * 0.706, 0.706, mass, r0_eff, freq, zc)
                 masses = np.linspace(mass * (1 - s["width"] / 100), mass * (1 + s["width"] / 100), int(s["npts"]))
                 per = int(s["per"])
-                ions = make_beam(per * len(masses), np.repeat(masses, per), zc, i["energy"],
+                ions = make_beam(per * len(masses), np.repeat(masses, per) * ref_z, ref_z, i["energy"],
                                  i["radius"] * 1e-3, i["angle"], birth_window=1 / freq, rng=rng)
-                v_min = np.sqrt(2 * i["energy"] * E_CHARGE * zc / (masses.max() * AMU))
+                v_min = np.sqrt(2 * i["energy"] * E_CHARGE / (masses.max() * ref_z * AMU))
                 res = Simulation([field(U, V)], z_end=L).run(ions, dt, 1.05 * L / v_min + 1 / freq,
                                                             rng=rng, progress=progress)
                 T = (res.status == 1).reshape(len(masses), per).mean(axis=1)
@@ -357,7 +373,19 @@ class QuadTab(SimTab):
 
         self.start(job, self._show, "Solving field and flying ions..." if key not in cache else "Flying ions...")
 
-    def _driver_job(self, out, d, wiring, grid, basis, r0_eff, i, o, ds, dn, L, rng, progress):
+    def _fly_species(self, species, i, fld, dt, L, birth, record_every, rng, progress):
+        """Fly every species of the ion table together (ions interleaved, so the recorded
+        paths include each species)."""
+        idx, mz, zc, _ = expand(species)
+        ions = make_beam(len(idx), mz * zc, zc, i["energy"], i["radius"] * 1e-3, i["angle"],
+                         birth_window=birth, rng=rng)
+        v_min = np.sqrt(2 * i["energy"] * E_CHARGE / ((mz * zc).max() * AMU))
+        res = Simulation([fld], z_end=L).run(ions, dt, 3 * L / v_min + birth, record_every=record_every,
+                                             rng=rng, progress=progress)
+        res.species = idx
+        return ions, res
+
+    def _driver_job(self, out, d, wiring, grid, basis, r0_eff, i, o, ds, species, L, rng, progress):
         """Fly with a driver's waveforms on the rods."""
         f_rf = d.rf_freq
         steps = self.rf.values()["steps"]
@@ -371,22 +399,20 @@ class QuadTab(SimTab):
         out.update(driver=d, U=U, V=V, kind=kind, targets=targets, f_rf=f_rf)
         if out["mode"] == 0:
             mass = i["mass"]
-            v_ax = np.sqrt(2 * i["energy"] * E_CHARGE * zc / (mass * AMU))
             a, q = mathieu.aq(U, V, mass, r0_eff, f_rf, zc)
-            ions = make_beam(int(dn["n"]), mass, zc, i["energy"], i["radius"] * 1e-3, i["angle"],
-                             birth_window=1 / f_rf, rng=rng)
-            res = Simulation([fld], z_end=L).run(ions, dt, 3 * L / v_ax + 1 / f_rf,
-                                                record_every=max(1, int(2 * fmax / f_rf)), rng=rng, progress=progress)
+            ions, res = self._fly_species(species, i, fld, dt, L, 1 / f_rf, max(1, int(2 * fmax / f_rf)), rng, progress)
             out.update(a=float(a), q=float(q), res=res, stable=bool(mathieu.is_stable(a, q)), mode=0)
+            out["aq"] = [tuple(float(x) for x in mathieu.aq(U, V, sp.mz, r0_eff, f_rf, 1)) for sp in species]
             return out
         m1, m2 = sorted((ds["m1"], ds["m2"]))
         masses = np.geomspace(m1, m2, int(ds["npts"]))
         hits = [m for _, ms in targets for m in ms if m1 <= m <= m2]
         masses = np.unique(np.concatenate([masses, hits]))       # make sure every notch is sampled
         per = int(ds["per"])
-        ions = make_beam(per * len(masses), np.repeat(masses, per), zc, i["energy"],
+        rz = i["ref"].z
+        ions = make_beam(per * len(masses), np.repeat(masses, per) * rz, rz, i["energy"],
                          i["radius"] * 1e-3, i["angle"], birth_window=1 / f_rf, rng=rng)
-        v_min = np.sqrt(2 * i["energy"] * E_CHARGE * zc / (masses.max() * AMU))
+        v_min = np.sqrt(2 * i["energy"] * E_CHARGE / (masses.max() * rz * AMU))
         res = Simulation([fld], z_end=L).run(ions, dt, 1.05 * L / v_min + 1 / f_rf, rng=rng, progress=progress)
         T = (res.status == 1).reshape(len(masses), per).mean(axis=1)
         a_m, q_m = mathieu.aq(U, V, masses, r0_eff, f_rf, zc)
@@ -404,15 +430,18 @@ class QuadTab(SimTab):
             self.log(f"Driver '{out['driver'].name}'" + (f", {out['kind']} excitation with "
                      f"{len(out['targets'])} tones" if out["kind"] else ""))
         if out["mode"] in (0, 1):
-            res = out["res"]
-            self.log(f"U = {out['U']:.2f} V, V = {out['V']:.2f} V -> a = {out['a']:.4f}, q = {out['q']:.4f} "
-                     f"({'Mathieu stable' if out['stable'] else 'Mathieu unstable'}); "
-                     f"transmitted {np.sum(res.status == 1)}/{len(res.status)} ({res.transmission:.0%}), "
-                     f"hit rods {np.sum(res.status == 2)}")
-            self.last_table = (["ion", "status(1=through,2=hit)", "t_end_s", "x_m", "y_m", "z_m"],
-                               [[k, int(res.status[k]), res.t_end[k], *res.final_pos[k]] for k in range(len(res.status))])
+            res, species = out["res"], out["species"]
+            self.log(f"U = {out['U']:.2f} V, V = {out['V']:.2f} V")
+            for d, (a, q) in zip(species_stats(res, species), out["aq"]):
+                ok = bool(mathieu.is_stable(a, q))
+                self.log(f"  {d['name']} (m/z {d['mz']:g}, {d['z']}+): a = {a:.4f}, q = {q:.4f} "
+                         f"({'Mathieu stable' if ok else 'Mathieu unstable'}); transmitted {d['through']:.0%}, "
+                         f"hit rods {d['lost']:.0%}")
+            self.last_table = (["ion", "species", "mz", "z", "status(1=through,2=hit)", "t_end_s", "x_m", "y_m", "z_m"],
+                               [[k, species[res.species[k]].name, species[res.species[k]].mz, species[res.species[k]].z,
+                                 int(res.status[k]), res.t_end[k], *res.final_pos[k]] for k in range(len(res.status))])
             self._draw_traj(out)
-            self._draw_stability([(out["q"], out["a"])])
+            self._draw_stability([(q, a) for a, q in out["aq"]], labels=[sp.name for sp in species])
         else:
             T, m, pred = out["T"], out["masses"], out["pred"]
             msg = f"Mass scan U = {out['U']:.2f} V, V = {out['V']:.2f} V: peak T = {T.max():.0%}"
@@ -443,17 +472,24 @@ class QuadTab(SimTab):
         self.plots.draw("Potential")
 
     def _draw_traj(self, out):
-        res, r0 = out["res"], out["g"]["r0"]
+        res, r0, species = out["res"], out["g"]["r0"], out["species"]
         fig = self.plots.fig("Trajectories")
         ax1, ax2 = fig.subplots(2, 1, sharex=True)
+        multi = len(species) > 1
+        style = lambda k: path_style(res.status[k], res.species[k], len(species)) if multi else (None, "-")
         for k in range(res.traj.shape[1]):
-            ax1.plot(res.traj[:, k, 2] * 1e3, res.traj[:, k, 0] * 1e3, lw=0.7)
-            ax2.plot(res.traj[:, k, 2] * 1e3, res.traj[:, k, 1] * 1e3, lw=0.7)
+            c, ls = style(k)
+            ax1.plot(res.traj[:, k, 2] * 1e3, res.traj[:, k, 0] * 1e3, lw=0.7, color=c, ls=ls)
+            ax2.plot(res.traj[:, k, 2] * 1e3, res.traj[:, k, 1] * 1e3, lw=0.7, color=c, ls=ls)
         for ax, lab in ((ax1, "x (mm)"), (ax2, "y (mm)")):
             ax.axhline(r0, color="k", lw=0.6); ax.axhline(-r0, color="k", lw=0.6)
             ax.set_ylim(-1.3 * r0, 1.3 * r0); ax.set_ylabel(lab)
         ax2.set_xlabel("z (mm)")
-        ax1.set_title(f"a = {out['a']:.4f}, q = {out['q']:.4f}, transmission {res.transmission:.0%}")
+        if multi:
+            species_legend(ax1, species, loc="upper right")
+            ax1.set_title(fate_caption(len(species)) + f"; overall transmission {res.transmission:.0%}", fontsize=9)
+        else:
+            ax1.set_title(f"a = {out['a']:.4f}, q = {out['q']:.4f}, transmission {res.transmission:.0%}")
         self.plots.draw("Trajectories")
 
         fig = self.plots.fig("Cross-section", show=False)
@@ -461,13 +497,14 @@ class QuadTab(SimTab):
         grid = out["grid"]
         ax.contourf(grid.X * 1e3, grid.Y * 1e3, grid.electrode > 0, levels=[0.5, 1.5], colors="0.75")
         for k in range(res.traj.shape[1]):
-            ax.plot(res.traj[:, k, 0] * 1e3, res.traj[:, k, 1] * 1e3, lw=0.5)
+            c, ls = style(k)
+            ax.plot(res.traj[:, k, 0] * 1e3, res.traj[:, k, 1] * 1e3, lw=0.5, color=c, ls=ls)
         lim = 1.6 * r0
         ax.set_xlim(-lim, lim); ax.set_ylim(-lim, lim); ax.set_aspect("equal")
         ax.set_xlabel("x (mm)"); ax.set_ylabel("y (mm)"); ax.set_title("Ion paths seen down the axis")
         self.plots.draw("Cross-section")
 
-    def _draw_stability(self, pts, colour=None):
+    def _draw_stability(self, pts, colour=None, labels=None):
         if not hasattr(self, "_stab_map"):
             self._stab_map = mathieu.stability_map(1.0, 0.3, 240, 160)
         Q, A, S = self._stab_map
@@ -476,7 +513,10 @@ class QuadTab(SimTab):
         ax.contourf(Q, A, S, levels=[0.5, 1.5], colors=["#9ecae1"])
         if pts:
             q, a = np.array(pts).T
-            if colour is None:
+            if labels is not None and len(labels) > 1:
+                for k, (qq, aa) in enumerate(pts):
+                    ax.plot(qq, aa, "o", color=species_color(k), ms=8, label=labels[k])
+            elif colour is None:
                 ax.plot(q, a, "o", color="C3", ms=8, label="operating point")
             else:
                 sc = ax.scatter(q, a, c=colour, s=10, cmap="viridis", label="scanned masses")

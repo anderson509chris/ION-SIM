@@ -28,6 +28,7 @@ from .laplace import Drive
 from .gasflight import disc_ions, fly
 from .gasflow import GasFlow, volumetric_flow
 from .gridtools import GridMap
+from .ions import interleave
 from .spacecharge import fly_with_space_charge
 from .twave import mobility
 from .constants import AMU, E_CHARGE
@@ -269,7 +270,8 @@ def gas_flow(field, slm, pressure_torr, temp_k=300.0, inlet_radius=5e-3, center=
 def run_funnel(field, z_start, z_end, mz, K0, n, pressure_torr, temp_k=300.0, charge_state=1,
                start_radius=5e-3, center=(0.0, 0.0), steps_per_cycle=30, t_max=None, gradient=20.0,
                gas_velocity=0.0, record=0, rng=None, progress=None, current=0.0, sc_iterations=4, heating=None):
-    """Fly n ions per m/z value. mz and K0 may be scalars or equal-length lists (mass scan).
+    """Fly n ions per m/z value. mz, K0, charge_state and n may be scalars or one value per
+    species (a mass scan or an ion mixture); res.species gives each ion's species index.
     gas_velocity: uniform axial speed (m/s) or a GasFlow. current: ion beam current (A); when
     non-zero the beam's space charge is iterated (sc_iterations passes, see spacecharge.py)
     and the result carries .space_charge and .sc_history. heating: a heating.HeatingModel to
@@ -277,8 +279,10 @@ def run_funnel(field, z_start, z_end, mz, K0, n, pressure_torr, temp_k=300.0, ch
     Returns (FlightResult, per-ion m/z)."""
     mz = np.atleast_1d(np.asarray(mz, float))
     K0 = np.broadcast_to(np.atleast_1d(np.asarray(K0, float)), mz.shape)
-    mz_ion = np.repeat(mz, n)
-    K = np.repeat(mobility(K0, pressure_torr, temp_k), n)
+    zc = np.broadcast_to(np.atleast_1d(np.asarray(charge_state, float)), mz.shape)
+    sp = interleave(np.broadcast_to(np.atleast_1d(n), mz.shape))
+    mz_ion = mz[sp]
+    K = mobility(K0, pressure_torr, temp_k)[sp]
     freq = field.freq
     rng = rng or np.random.default_rng()
     if t_max is None:
@@ -287,7 +291,7 @@ def run_funnel(field, z_start, z_end, mz, K0, n, pressure_torr, temp_k=300.0, ch
         t_max = float(np.clip(3 * (z_end - z_start) / v, 50 / freq, 0.05))
 
     def fly_once(fld, dwell=None, dwell_every=5, prog=progress):
-        ions = disc_ions(len(mz_ion), mz_ion * charge_state, K, charge_state, center, start_radius, z_start,
+        ions = disc_ions(len(mz_ion), mz_ion * zc[sp], K, zc[sp], center, start_radius, z_start,
                          temp_k, birth_window=1 / freq, rng=rng)
         return fly(fld, ions, 1 / (freq * steps_per_cycle), t_max, z_end, temp_k, gas_velocity,
                    record=record, record_every=max(1, steps_per_cycle // 3), rng=rng, progress=prog,
@@ -298,4 +302,5 @@ def run_funnel(field, z_start, z_end, mz, K0, n, pressure_torr, temp_k=300.0, ch
                                           sc_iterations, progress=progress)
     else:
         res = fly_once(field)
+    res.species = sp
     return res, mz_ion

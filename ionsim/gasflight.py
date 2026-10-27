@@ -43,7 +43,7 @@ class GasIons:
 def disc_ions(n, mass_amu, K, charge_state=1, center=(0.0, 0.0), radius=1e-3, z0=0.0,
               temp_k=300.0, birth_window=0.0, rng=None):
     """Ions uniform in a disc of `radius` at z = z0, thermal velocities, birth times
-    uniform in [0, birth_window). mass_amu and K may be scalars or (n,) arrays."""
+    uniform in [0, birth_window). mass_amu, K and charge_state may be scalars or (n,) arrays."""
     rng = rng or np.random.default_rng()
     mass = np.broadcast_to(np.asarray(mass_amu, float), (n,)) * AMU
     K = np.broadcast_to(np.asarray(K, float), (n,)).copy()
@@ -51,7 +51,8 @@ def disc_ions(n, mass_amu, K, charge_state=1, center=(0.0, 0.0), radius=1e-3, z0
     th = 2 * np.pi * rng.random(n)
     pos = np.column_stack([center[0] + r * np.cos(th), center[1] + r * np.sin(th), np.full(n, z0)])
     vel = np.sqrt(K_B * temp_k / mass)[:, None] * rng.standard_normal((n, 3))
-    return GasIons(pos, vel, mass.copy(), np.full(n, charge_state * E_CHARGE), K, birth_window * rng.random(n))
+    charge = np.broadcast_to(np.asarray(charge_state, float), (n,)) * E_CHARGE
+    return GasIons(pos, vel, mass.copy(), charge, K, birth_window * rng.random(n))
 
 
 @dataclass
@@ -62,6 +63,7 @@ class FlightResult:
     traj_t: np.ndarray = None
     traj: np.ndarray = None   # (n_samples, n_record, 3), NaN after an ion stops
     heat: object = None           # heating.HeatResult when ion heating was tracked
+    species: np.ndarray = None    # species index of each ion (ion mixtures)
     space_charge: object = None   # spacecharge.SpaceCharge used for this flight, if any
     sc_history: list = None
     sc_converged: bool = True

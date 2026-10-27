@@ -153,6 +153,14 @@ want = 300 + 28.013 * AMU * (Kh * 2e4) ** 2 / (3 * K_B)
 check("ion heating (Wannier)", abs(res.heat.teff_mean.mean() - want) < 0.01 * want,
       f"{res.heat.teff_mean.mean():.1f} K vs {want:.1f} K")
 
+# ion mixtures: two species flown together, interleaved, each with its own m/z, charge and mobility
+res, info = fly_device(fld, [200, 1200], [1.5, 0.8], [20, 20], 4.0, charge_state=[1, 2], radius=2e-3,
+                       z_start=0.5e-3, z_end=31e-3, rng=np.random.default_rng(1))
+sp = res.species
+t_light, t_heavy = (np.nanmean(res.t_end[(sp == k) & (res.status == 1)]) for k in (0, 1))
+check("ion mixture", list(sp[:4]) == [0, 1, 0, 1] and (sp == 1).sum() == 20 and t_light < t_heavy,
+      f"transit {t_light * 1e3:.2f} vs {t_heavy * 1e3:.2f} ms, transmission {res.transmission:.0%}")
+
 # the app window builds
 from PySide6 import QtWidgets
 from ionsim.gui.app import MainWindow

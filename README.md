@@ -66,9 +66,11 @@ PyInstaller can only build for the operating system it runs on, which is why the
 
 Set the parameters on the left and press **Run**. Runs happen in the background with a progress bar and a **Stop** button. Every plot can be zoomed, panned and saved, and **File > Export results (CSV)** writes the numbers out.
 
+**Ion mixtures.** The quadrupole, TWAVE, ion funnel and device builder tabs take their ions from an **Ions** table: one row per species (name, m/z, charge, K0, number of ions), with **Add** (copies the selected row) and **Remove**. All species fly together in one run. Trajectories are coloured by species (solid: transmitted, dotted: lost, dashed: still flying), arrival-time and exit plots split by species, and the results box and CSV give transmission, transit time and heating for each species. Where a tab needs one reference ion (the quadrupole's a/q operating point and mass scan, the funnel's m/z scan and RF effective-potential map), it uses the first row.
+
 ### Quadrupole mass filter
 
-Rod geometry, RF frequency, ion beam and operating point (a, q or U, V, kept in sync). It runs either a single operating point or a full mass scan. Plot tabs: Potential, Trajectories, Cross-section, Stability, Mass scan and Excitation.
+Rod geometry, RF frequency, ions, beam and operating point (a, q or U, V, kept in sync, set for the first ion in the table). It runs either a single operating point, with every ion's own (a, q) marked on the stability diagram, or a full mass scan. Plot tabs: Potential, Trajectories, Cross-section, Stability, Mass scan and Excitation.
 
 Under **Drive**, pick a driver from the Drivers tab instead of the built-in RF/DC, and choose which output goes on each rod (x+, x−, y+, y−). The tab then works out the excitation type from the tone signs on the rods: tones added with the RF (+ on one pair, − on the other) are quadrupolar and eject at twice the secular frequency; tones across one rod pair are dipolar and eject at the secular frequency. It lists the m/z each tone hits, and **Aim tone k at m/z** sets a tone's frequency for you. **Transmission vs m/z (excitation scan)** flies a log-spaced m/z range (plus every predicted notch) and plots the notches with the tone resonances marked (with 8 tones close together, their notches and weaker side resonances overlap into a broad rejection band, as in the example); the **Excitation** plot shows the secular frequencies against m/z with the tones drawn across them, so crossings are the ejected masses.
 
@@ -82,7 +84,7 @@ Under **Drive**, pick a driver from the Drivers tab instead of the built-in RF/D
 
 ### TWAVE traveling wave
 
-Board geometry, wave amplitude, speed and shape, gas pressure and temperature, and a list of ion mobilities (K0) to separate. It runs either a single separation or a sweep over wave speed. Plot tabs: TW field, Arrival times, Ion velocity and Speed sweep.
+Board geometry, wave amplitude, speed and shape, gas pressure and temperature, and the ions to separate (each with its K0, plus m/z and charge for diffusion and heating). It runs either a single separation or a sweep over wave speed. Plot tabs: TW field, Arrival times, Ion velocity and Speed sweep.
 
 | Arrival-time distribution | Traveling-wave field |
 |---|---|
@@ -106,7 +108,7 @@ Spray region (emitter distance, tip radius, spray voltage, where ions leave the 
 
 ### Ion funnel
 
-Pick the funnel type at the top: **Ring funnel** (stacked PCBs), **Planar funnel** (two boards), or **Imported CAD**. Then set the electrics (RF amplitude and frequency, DC gradient, exit plate), gas and ions (m/z, charge, K0, start radius). It runs either trajectories for one m/z or transmission against m/z. Plot tabs: Geometry, Potential (DC, RF effective potential and space charge), Trajectories, Transmission, Exit beam and Gas flow. While the geometry stays the same, the solver is kept, so changing only voltages re-runs in about a second.
+Pick the funnel type at the top: **Ring funnel** (stacked PCBs), **Planar funnel** (two boards), or **Imported CAD**. Then set the electrics (RF amplitude and frequency, DC gradient, exit plate), gas and ions (the ion table, start radius). It runs either trajectories for every species in the table or transmission against m/z. Plot tabs: Geometry, Potential (DC, RF effective potential and space charge), Trajectories, Transmission, Exit beam and Gas flow. While the geometry stays the same, the solver is kept, so changing only voltages re-runs in about a second.
 
 * **PCB dielectric.** Ring funnel: each ring is a copper ring around the bore (**Copper ring width**, plated through both faces) on an FR4 board out to the plate diameter (**Board εr**, 4.4 for FR4). Set the width to 0 for all-metal plates. Planar funnel: the strips sit on **Board thickness** of FR4 (0 for strips in free space). Imported CAD: type a permittivity in a body's **Insulator εr** column to make it a board or spacer instead of an electrode. Insulators are drawn in tan, shape the field and stop ions, but carry no voltage.
 * **Gas flow.** *Still gas*, *Uniform axial speed*, or *Flow field from gas throughput*. The flow field takes the throughput in slm and an inlet disc on the entrance face (radius 0 = the entrance bore). It solves viscous flow through the open space, pumped out through every open side, and shows it on the **Gas flow** tab. In the ring funnel almost all the gas leaves between the rings, and about 0.2% reaches the exit.
@@ -142,7 +144,7 @@ The general tab for your own electrodes. Work down the left panel:
 3. **Patterns** for the selected electrodes: **Fixed** (same voltages), **DC gradient** (start and end voltage along the ion axis, with optional RF alternating 0°/180° pad to pad), **TWAVE phases** (pads numbered 1..N along the axis, pads side by side share a phase, pitch measured from the drawing), **Ground**, **Remove from TWAVE**.
 4. **Electrics:** RF frequency, and the TWAVE amplitude, speed, number of phases (8 by default) and how many are on. The step time is shown.
 5. **Grid:** **Quick** (seconds, for setting up) or **Detailed** (finer, for final numbers), or a custom spacing. **Check geometry on this grid** reports overlapping electrodes, electrodes closer than the grid spacing, parts too thin for the grid, and parts touching the grid edge.
-6. **Ions and gas**, then **Solve and fly**. Changing only voltages re-uses the grid and warm-starts the solve.
+6. **Ions and gas** (the ion table, gas, start point and detector), then **Solve and fly**. Setups save the ion table; older setups load as one species. Changing only voltages re-uses the grid and warm-starts the solve.
 7. **Gas flow and space charge:** the same flow field (axisymmetric and 3D devices) and space-charge iteration as the funnel tab.
 8. **Ion heating:** gas, how many collisions the ion's internal temperature needs to follow, and optionally an activation energy and pre-factor for a fragmentation / unfolding estimate. Results are in the **Heating** plot.
 
@@ -461,7 +463,7 @@ ION-SIM/
 │   ├── heating.py          # effective / internal ion temperature, fragmentation estimate
 │   └── gui/                # PySide6 app: one tab per device, shared widgets,
 │                           #   device_tab.py and electrode_view.py (clickable electrodes),
-│                           #   drivers_tab.py, heating_view.py
+│                           #   drivers_tab.py, heating_view.py, ion_table.py (ion mixtures)
 ├── examples/               # one demo per device; geometry/ has example STEP, DXF and .ionsim setups,
 │                           #   drivers/ has example .iondrv drivers
 ├── tests/smoke_test.py     # quick end-to-end check of imports, solves and the app window

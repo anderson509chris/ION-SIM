@@ -13,6 +13,8 @@ from ..twave import mobility
 from .common import ParamForm, SimTab
 from .electrode_view import ElectrodeView, INSULATOR
 from .heating_view import HeatingBox, draw_heating
+from .ion_table import IonTable, species_color, path_style, fate_caption, species_legend, species_stats
+from ..ions import IonSpecies
 
 TYPES = ["Ring funnel (stacked PCBs)", "Planar funnel (two boards)", "Imported CAD (STEP / STL / OBJ)"]
 MODES = ["Trajectories", "Transmission vs m/z"]
@@ -99,11 +101,10 @@ class FunnelTab(SimTab):
         ])
         self.space.setToolTip("The ions are flown several times; each flight's charge (current x time spent) "
                               "sets the space-charge field for the next. Each iteration costs one more flight.")
-        self.ions = ParamForm("Ions", [
-            ("mz", "m/z", 500, 1, 1e6, 1, 10, ""),
-            ("z", "Charge state", 1, 1, 100, 0, 1, ""),
-            ("K0", "K0 at this m/z", 1.0, 0.01, 50, 3, 0.05, "cm²/Vs"),
-            ("n", "Ions", 200, 1, 100000, 0, 50, ""),
+        self.ion_table = IonTable("Ions (one row per species, flown together)", [IonSpecies("m/z 500", 500, 1, 1.0, 200)])
+        self.ion_table.setToolTip("Every species is flown in the same run. The m/z scan uses the first row as its "
+                                  "reference (its charge, and K0 scaled from its m/z).")
+        self.ions = ParamForm("Start and time step", [
             ("r0", "Start radius", 8.0, 0.0, 100, 2, 0.5, "mm"),
             ("steps", "Steps per RF cycle", 30, 8, 400, 0, 2, ""),
             ("tmax", "Max flight time (0 = auto)", 0.0, 0, 1000, 2, 1, "ms"),
@@ -119,7 +120,7 @@ class FunnelTab(SimTab):
             ("expo", "K0 ∝ (m/z)^-n, n =", 0.667, 0, 2, 3, 0.05, ""),
         ])
         self.heat = HeatingBox()
-        for w in (kind_box, self.ring, self.planar, self.cad_box, self.elec, self.gas, self.space, self.ions, self.heat,
+        for w in (kind_box, self.ring, self.planar, self.cad_box, self.elec, self.gas, self.space, self.ion_table, self.ions, self.heat,
                   mode_box, self.scan):
             self.form_layout.addWidget(w)
         self.form_layout.addStretch(1)
@@ -463,11 +464,20 @@ class FunnelTab(SimTab):
         r_in = self._inlet_radius(geo, start) if flow_mode == 2 else 0.0
         flow_key = (key, gs["slm"], gs["p"], gs["T"], r_in, start)
         flow_cache = self._flow_cache[1] if flow_mode == 2 and cache and self._flow_cache and self._flow_cache[0] == flow_key else None
+        try:
+            species = self.ion_table.species()
+        except ValueError as e:
+            self.log(f"Input error: {e}")
+            return
+        ref = species[0]
         if mode == 0:
-            mz = np.array([io["mz"]]); K0 = np.array([io["K0"]]); n, rec = int(io["n"]), min(int(io["n"]), 40)
+            species = [s for s in species if s.n > 0]
+            mz, K0 = np.array([s.mz for s in species]), np.array([s.K0 for s in species])
+            zc, n = np.array([s.z for s in species]), np.array([s.n for s in species])
+            rec = min(int(n.sum()), max(40, 10 * len(species)))
         else:
             mz = np.geomspace(sc["m0"], sc["m1"], int(sc["nm"]))
-            K0 = io["K0"] * (mz / io["mz"]) ** (-sc["expo"]); n, rec = int(sc["per"]), 0
+            K0 = ref.K0 * (mz / ref.mz) ** (-sc["expo"]); n, rec, zc = int(sc["per"]), 0, ref.z
 
         def job(progress):
             import time
@@ -486,12 +496,12 @@ class FunnelTab(SimTab):
                 flow = flow_cache or gas_flow(fld, gs["slm"], gs["p"], gs["T"], r_in, start)
                 gas_u = flow
             t1 = time.time()
-            res, mzi = run_funnel(fld, z0, z1, mz, K0, n, gs["p"], gs["T"], int(io["z"]), io["r0"] * MM, start,
+            res, mzi = run_funnel(fld, z0, z1, mz, K0, n, gs["p"], gs["T"], zc, io["r0"] * MM, start,
                                   int(io["steps"]), io["tmax"] * 1e-3 or None, el.gradient, gas_u, rec,
                                   progress=progress, current=current, sc_iterations=sc_it, heating=heat_model)
             return {"key": key, "grid": grid, "solver": solver, "field": fld, "res": res, "mzi": mzi, "mz": mz,
                     "K0": K0, "mode": mode, "t_solve": t_solve, "cached": bool(cache), "start": start, "z": (z0, z1),
-                    "gas": gs, "io": io, "el": el, "flow": flow, "flow_key": flow_key, "r_in": r_in,
+                    "gas": gs, "io": io, "el": el, "species": species, "ref": ref, "flow": flow, "flow_key": flow_key, "r_in": r_in,
                     "current": current, "t_fly": time.time() - t1}
 
         # while the geometry is unchanged the grid and solver are reused: new voltages only re-solve
@@ -524,20 +534,24 @@ class FunnelTab(SimTab):
         self._draw_potential(out)
         if out["mode"] == 0:
             st = res.status
-            tr = st == 1
-            self.log(f"m/z {out['mz'][0]:g}: transmitted {np.mean(tr):.0%}, lost {np.mean(st == 2):.0%}, "
-                     f"still flying {np.mean(st <= 0):.0%}"
-                     + (f"; transit {np.nanmean(res.t_end[tr]) * 1e3:.2f} ms, exit r_rms "
-                        f"{np.sqrt(np.mean(np.sum((res.final_pos[tr, :2] - out['start']) ** 2, 1))) / MM:.3f} mm" if tr.any() else ""))
+            species = out["species"]
+            for d in species_stats(res, species):
+                tr = d["mask"] & (st == 1)
+                self.log(f"{d['name']} (m/z {d['mz']:g}, {d['z']}+): transmitted {d['through']:.0%}, lost {d['lost']:.0%}, "
+                         f"still flying {d['flying']:.0%}"
+                         + (f"; transit {d['transit'] * 1e3:.2f} ms, exit r_rms "
+                            f"{np.sqrt(np.mean(np.sum((res.final_pos[tr, :2] - out['start']) ** 2, 1))) / MM:.3f} mm" if tr.any() else ""))
+                if res.heat is not None:
+                    self.log(f"  Heating {d['name']}: " + res.heat.summary(d["mask"] & (st >= 0)))
             self._draw_traj(out)
             self._draw_exit(out)
-            if res.heat is not None:
-                self.log("  Heating (all ions): " + res.heat.summary(st >= 0))
+            names = ", ".join(s.name for s in species)
             draw_heating(self.plots.figs["Heating"], res.heat, st,
-                         title=f"m/z {out['mz'][0]:g} in {out['gas']['p']:g} Torr: ion heating along the funnel")
+                         title=f"{names} in {out['gas']['p']:g} Torr: ion heating along the funnel")
             self.plots.draw("Heating")
-            self.last_table = (["status(1=out,2=lost,0=flying)", "x_mm", "y_mm", "z_mm", "t_ms"],
-                               [[int(s), *(p / MM), t * 1e3] for s, p, t in zip(st, res.final_pos, res.t_end)])
+            self.last_table = (["species", "mz", "z", "status(1=out,2=lost,0=flying)", "x_mm", "y_mm", "z_mm", "t_ms"],
+                               [[species[k].name, species[k].mz, species[k].z, int(s), *(p / MM), t * 1e3]
+                                for k, s, p, t in zip(res.species, st, res.final_pos, res.t_end)])
         else:
             mz = out["mz"]
             T = np.array([np.mean(res.status[mzi == m] == 1) for m in mz])
@@ -564,7 +578,7 @@ class FunnelTab(SimTab):
             self.last_table = (["mz", "K0", "transmitted", "lost", "trapped"], [list(r) for r in zip(mz, out["K0"], T, L, F)])
 
     def _draw_potential(self, out):
-        fld, el, io = out["field"], out["el"], out["io"]
+        fld, el = out["field"], out["el"]
         sec = fld.sections(out["start"])
         sc = out["res"].space_charge
         fig = self.plots.fig("Potential", show=False)
@@ -576,8 +590,9 @@ class FunnelTab(SimTab):
                             extent=[Z[0], Z[-1], A[0], A[-1]])
         fig.colorbar(im, ax=axes[0], label="V")
         e2 = sum(sum(gg ** 2 for gg in np.gradient(p, s["h"])) for p in s["rf"]) * 0.5
-        K = mobility(io["K0"], out["gas"]["p"], out["gas"]["T"])
-        U = pseudopotential(e2, io["mz"], int(io["z"]), K, el.freq)
+        ref = out["ref"]
+        K = mobility(ref.K0, out["gas"]["p"], out["gas"]["T"])
+        U = pseudopotential(e2, ref.mz, int(ref.z), K, el.freq)
         im = axes[1].imshow(np.ma.masked_where(solid, np.clip(U, 1e-3, 10)), origin="lower", aspect="auto", cmap="magma",
                             extent=[Z[0], Z[-1], A[0], A[-1]], norm=LogNorm(1e-3, 10))
         fig.colorbar(im, ax=axes[1], label="V")
@@ -591,7 +606,7 @@ class FunnelTab(SimTab):
             _outline(ax, s)
             ax.set_ylabel("x (mm)")
         axes[0].set_title("DC potential (x-z section)", fontsize=9)
-        axes[1].set_title(f"RF effective potential for m/z {io['mz']:g} (log scale)", fontsize=9)
+        axes[1].set_title(f"RF effective potential for {ref.name} (m/z {ref.mz:g}, {ref.z}+; log scale)", fontsize=9)
         axes[-1].set_xlabel("z (mm)")
         self.plots.draw("Potential")
 
@@ -604,14 +619,14 @@ class FunnelTab(SimTab):
             s = sec[key]
             _outline(ax, s)
             if res.traj is not None:
-                fate = res.status[: res.traj.shape[1]]
                 for i in range(res.traj.shape[1]):
-                    ax.plot(res.traj[:, i, 2] / MM, res.traj[:, i, c] / MM, lw=0.6,
-                            color="tab:blue" if fate[i] == 1 else ("tab:red" if fate[i] == 2 else "tab:orange"))
+                    col, ls = path_style(res.status[i], res.species[i], len(out["species"]))
+                    ax.plot(res.traj[:, i, 2] / MM, res.traj[:, i, c] / MM, lw=0.6, color=col, ls=ls)
             ax.set_ylabel(f"{key} (mm)")
             ax.axvline(out["z"][1] / MM, color="k", ls=":", lw=1)
         axes[1].set_xlabel("z (mm)")
-        axes[0].set_title("blue: transmitted, red: lost, orange: still flying; dotted: detector", fontsize=9)
+        species_legend(axes[0], out["species"], loc="upper right")
+        axes[0].set_title(fate_caption(len(out["species"])) + "; dotted black: detector", fontsize=9)
         self.plots.draw("Trajectories")
 
     def _draw_exit(self, out):
@@ -619,13 +634,19 @@ class FunnelTab(SimTab):
         tr = res.status == 1
         fig = self.plots.fig("Exit beam", show=False)
         ax1, ax2 = fig.subplots(1, 2)
-        p = (res.final_pos[tr, :2] - out["start"]) / MM
-        ax1.plot(p[:, 0], p[:, 1], ".", ms=3)
+        species = out["species"]
+        bins = np.linspace(np.nanmin(res.t_end[tr]), np.nanmax(res.t_end[tr]), 41) * 1e3 if tr.any() else 40
+        for k, s in enumerate(species):
+            m = tr & (res.species == k)
+            p = (res.final_pos[m, :2] - out["start"]) / MM
+            ax1.plot(p[:, 0], p[:, 1], ".", ms=3, color=species_color(k), label=s.name)
+            if m.any():
+                ax2.hist(res.t_end[m] * 1e3, bins=bins, alpha=0.6, color=species_color(k), label=s.name)
         ax1.set_aspect("equal", adjustable="datalim")
         ax1.set_xlabel("x (mm)"); ax1.set_ylabel("y (mm)"); ax1.set_title("Transmitted ions at the detector", fontsize=9)
-        if tr.any():
-            ax2.hist(res.t_end[tr] * 1e3, bins=40)
         ax2.set_xlabel("transit time (ms)"); ax2.set_ylabel("ions"); ax2.set_title("Transit time", fontsize=9)
+        if len(species) > 1:
+            ax2.legend(fontsize=7)
         self.plots.draw("Exit beam")
 
 

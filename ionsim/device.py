@@ -687,7 +687,9 @@ def device_gas_flow(fld, slm, pressure_torr, temp_k, inlet_radius, center=(0.0, 
 def fly_device(fld, mz, K0, n, pressure_torr, temp_k=300.0, charge_state=1, center=(0.0, 0.0),
                radius=0.5e-3, z_start=None, z_end=None, energy_ev=0.0, gas_velocity=0.0, dt=None,
                t_max=None, record=40, rng=None, progress=None, current=0.0, sc_iterations=4, heating=None):
-    """Fly n ions of one m/z through a DeviceField with gas (Langevin) dynamics.
+    """Fly ions through a DeviceField with gas (Langevin) dynamics. mz, K0, charge_state and
+    n are scalars (one kind of ion) or one value per species (a mixture, flown together;
+    res.species gives each ion's species index, ions interleaved across species).
     Near-vacuum works too: give a tiny pressure and an axial energy.
     gas_velocity: uniform speed along z (m/s) or a GasFlow (device_gas_flow).
     current: ion beam current (A); non-zero iterates the beam's space charge.
@@ -701,7 +703,12 @@ def fly_device(fld, mz, K0, n, pressure_torr, temp_k=300.0, charge_state=1, cent
     lo, hi = fld.dev.extent()
     z_start = lo[2] if z_start is None else z_start
     z_end = hi[2] if z_end is None else z_end
-    K = mobility(K0, max(pressure_torr, 1e-9), temp_k)
+    from .ions import interleave
+    mz_s = np.atleast_1d(np.asarray(mz, float))
+    zc_s = np.broadcast_to(np.atleast_1d(np.asarray(charge_state, float)), mz_s.shape)
+    K_s = mobility(np.broadcast_to(np.atleast_1d(np.asarray(K0, float)), mz_s.shape), max(pressure_torr, 1e-9), temp_k)
+    sp = interleave(np.broadcast_to(np.atleast_1d(n), mz_s.shape))
+    K = K_s.min()                                   # slowest species sets the flight time
     freqs = fld.frequencies()
     has_rf = bool(freqs)
     steps_tw = [sp.step for sp in fld.tw_specs() if np.isfinite(sp.step) and sp.step > 0]
@@ -711,13 +718,13 @@ def fly_device(fld, mz, K0, n, pressure_torr, temp_k=300.0, charge_state=1, cent
         cands += [sp.rise / 4 for sp in fld.tw_specs() if sp.rise > 0]
         L = max(z_end - z_start, 1e-6)
         cands.append(L / 2000)
-        tau = mz * charge_state * AMU * K / (charge_state * E_CHARGE)
+        tau = float(np.min(mz_s * AMU * K_s / E_CHARGE))
         if not has_rf:
             cands.append(max(tau, 1e-9) * 50)
         dt = min(cands)
     if t_max is None:
         L = max(z_end - z_start, 1e-6)
-        v = u_typ + (np.sqrt(2 * energy_ev * E_CHARGE / (mz * AMU)) if energy_ev > 0 else 0)
+        v = u_typ + (np.sqrt(2 * energy_ev * E_CHARGE / (mz_s.max() * AMU)) if energy_ev > 0 else 0)
         if fld.tw_speed() > 0:
             v = max(v, 0.05 * fld.tw_speed())
         if pressure_torr > 0.01:
@@ -728,10 +735,10 @@ def fly_device(fld, mz, K0, n, pressure_torr, temp_k=300.0, charge_state=1, cent
         t_max = 3e6 * dt
 
     def fly_once(f, dwell=None, dwell_every=5, prog=progress):
-        ions = disc_ions(n, mz * charge_state, K, charge_state, center, radius, z_start, temp_k,
+        ions = disc_ions(len(sp), mz_s[sp] * zc_s[sp], K_s[sp], zc_s[sp], center, radius, z_start, temp_k,
                          birth_window=(min(1 / min(freqs), 1e-4) if has_rf else 0.0), rng=rng)
         if energy_ev > 0:
-            v_in = np.sqrt(2 * energy_ev * E_CHARGE * charge_state / (mz * charge_state * AMU))
+            v_in = np.sqrt(2 * energy_ev * E_CHARGE / (mz_s[sp] * AMU))
             ions.vel[:, 2] += v_in
             ions.v0 = np.zeros_like(ions.vel)
             ions.v0[:, 2] = v_in - (0.0 if hasattr(gas_velocity, "velocity") else gas_velocity)
@@ -744,4 +751,5 @@ def fly_device(fld, mz, K0, n, pressure_torr, temp_k=300.0, charge_state=1, cent
                                           sc_iterations, progress=progress)
     else:
         res = fly_once(fld)
-    return res, dict(dt=dt, t_max=t_max, z_start=z_start, z_end=z_end, K=K)
+    res.species = sp
+    return res, dict(dt=dt, t_max=t_max, z_start=z_start, z_end=z_end, K=K_s if len(K_s) > 1 else float(K_s[0]))

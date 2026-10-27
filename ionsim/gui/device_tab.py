@@ -16,6 +16,8 @@ from .electrode_view import ElectrodeView, INSULATOR
 from .funnel_tab import FLOWS
 from .driver_store import get_store
 from .heating_view import HeatingBox, draw_heating
+from .ion_table import IonTable, species_color, path_style, fate_caption, species_legend, species_stats
+from ..ions import IonSpecies
 
 MM = 1e-3
 DXF_KINDS = ["planar2d", "axisym", "boards"]
@@ -177,15 +179,13 @@ class DeviceTab(SimTab):
         self.form_layout.addWidget(box)
 
         # ---- 6. ions ----
-        self.ions = ParamForm("6. Ions", [
-            ("mz", "m/z", 500.0, 1, 1e7, 2, 10, ""),
-            ("z", "Charge state", 1, 1, 200, 0, 1, ""),
-            ("K0", "Reduced mobility K0", 1.0, 0.01, 50, 3, 0.05, "cm²/Vs"),
+        self.ion_table = IonTable("6. Ions (one row per species, flown together)", [IonSpecies("m/z 500", 500, 1, 1.0, 200)])
+        self.form_layout.addWidget(self.ion_table)
+        self.ions = ParamForm("Gas, start and timing", [
             ("p", "Gas pressure (≈0 for vacuum)", 4.0, 0.0, 1e4, 6, 0.5, "Torr"),
             ("T", "Gas temperature", 300.0, 1, 2000, 1, 5, "K"),
             ("u", "Gas speed along the ion axis", 0.0, -1e4, 1e4, 2, 1, "m/s"),
-            ("E", "Axial ion energy at start", 0.0, 0, 1e5, 3, 1, "eV"),
-            ("n", "Ions", 200, 1, 100000, 0, 50, ""),
+            ("E", "Axial ion energy at start (per charge)", 0.0, 0, 1e5, 3, 1, "eV"),
             ("x0", "Start centre x", 0.0, -1e5, 1e5, 3, 0.5, "mm"),
             ("y0", "Start centre y", 0.0, -1e5, 1e5, 3, 0.5, "mm"),
             ("r", "Start radius", 0.3, 0, 1e4, 3, 0.1, "mm"),
@@ -668,6 +668,12 @@ class DeviceTab(SimTab):
         dg = self.grid[1] if self.grid and self.grid[0] == key else None
         prev = self.field if dg is not None else None
         io = self.ions.values()
+        try:
+            species = [sp for sp in self.ion_table.species() if sp.n > 0]
+        except ValueError as e:
+            self._error("Ions", str(e))
+            return
+        n_tot = sum(sp.n for sp in species)
         ex, flow_mode = self.extra.values(), self.flow.currentIndex()
         if flow_mode == 2 and self.dev.kind == "planar2d":
             self._error("Gas flow", "A 2D cross-section has no flow pattern along the axis: use a uniform gas speed.")
@@ -692,14 +698,15 @@ class DeviceTab(SimTab):
                                                       (io["x0"] * MM, io["y0"] * MM))
                 gas_u = flow
             t2 = time.time()
-            res, info = fly_device(fld, io["mz"], io["K0"], int(io["n"]), io["p"], io["T"], int(io["z"]),
+            res, info = fly_device(fld, [sp.mz for sp in species], [sp.K0 for sp in species], [sp.n for sp in species],
+                                   io["p"], io["T"], [sp.z for sp in species],
                                    (io["x0"] * MM, io["y0"] * MM), io["r"] * MM, io["z0"] * MM, io["z1"] * MM,
                                    io["E"], gas_u, io["dt"] * 1e-6 or None, io["tmax"] * 1e-3 or None,
-                                   record=min(int(io["n"]), 40),
+                                   record=min(n_tot, max(40, 10 * len(species))),
                                    progress=lambda f: progress(0.3 + 0.7 * f),
                                    current=ex["I"] * 1e-9, sc_iterations=int(ex["it"]), heating=heat_model)
             return dict(grid=g, field=fld, res=res, info=info, built=dg is None, t_build=t1 - t0, t_solve=t2 - t1,
-                        t_fly=time.time() - t2, io=io, key=key, flow=flow, flow_key=flow_key, ex=ex)
+                        t_fly=time.time() - t2, io=io, key=key, flow=flow, flow_key=flow_key, ex=ex, species=species)
 
         self.start(job, self._show, "Solving fields and flying ions…" if dg is None else "Re-solving voltages and flying ions…")
 
@@ -728,25 +735,26 @@ class DeviceTab(SimTab):
                      + ("" if res.sc_converged else "  (NOT settled: raise the iterations, or the current is more "
                                                     "than this device carries and ions pile up)"))
         st = res.status
-        tr = st == 1
-        io = out["io"]
-        msg = (f"m/z {io['mz']:g}: transmitted {np.mean(tr):.0%}, lost on electrodes {np.mean(st == 2):.0%}, "
-               f"still flying {np.mean(st <= 0):.0%} (dt {info['dt'] * 1e9:.3g} ns, max {info['t_max'] * 1e3:.3g} ms, "
-               f"flown in {out['t_fly']:.1f} s)")
-        if tr.any():
-            L = info["z_end"] - info["z_start"]
-            tt = np.nanmean(res.t_end[tr])
-            msg += f"; mean transit {tt * 1e3:.4g} ms, mean axial speed {L / tt:.4g} m/s"
-        self.log(msg)
-        self.last_table = (["status(1=out,2=lost,0=flying)", "x_mm", "y_mm", "z_mm", "t_ms"],
-                           [[int(s), *(p / MM), t * 1e3] for s, p, t in zip(st, res.final_pos, res.t_end)])
+        species = out["species"]
+        self.log(f"Flown {len(st)} ions of {len(species)} species in {out['t_fly']:.1f} s "
+                 f"(dt {info['dt'] * 1e9:.3g} ns, max {info['t_max'] * 1e3:.3g} ms)")
+        L = info["z_end"] - info["z_start"]
+        for d in species_stats(res, species, L):
+            msg = (f"{d['name']} (m/z {d['mz']:g}, {d['z']}+): transmitted {d['through']:.0%}, lost on electrodes "
+                   f"{d['lost']:.0%}, still flying {d['flying']:.0%}")
+            if np.isfinite(d["transit"]):
+                msg += f"; mean transit {d['transit'] * 1e3:.4g} ms, mean axial speed {d['speed']:.4g} m/s"
+            self.log(msg)
+            if res.heat is not None:
+                self.log(f"  Heating {d['name']}: " + res.heat.summary(d["mask"] & (st >= 0)))
+        self.last_table = (["species", "mz", "z", "status(1=out,2=lost,0=flying)", "x_mm", "y_mm", "z_mm", "t_ms"],
+                           [[species[k].name, species[k].mz, species[k].z, int(s), *(p / MM), t * 1e3]
+                            for k, s, p, t in zip(res.species, st, res.final_pos, res.t_end)])
         self._draw_potential(fld, res.space_charge)
-        self._draw_traj(fld, res, info)
-        self._draw_results(res, info)
-        if res.heat is not None:
-            self.log("  Heating: " + res.heat.summary(st >= 0))
+        self._draw_traj(fld, res, info, species)
+        self._draw_results(res, info, species)
         draw_heating(self.plots.figs["Heating"], res.heat, st,
-                     title=f"m/z {io['mz']:g} in {io['p']:g} Torr: ion heating along the ion axis")
+                     title=f"{', '.join(sp.name for sp in species)} in {out['io']['p']:g} Torr: ion heating along the ion axis")
         self.plots.draw("Heating")
 
     # ================= drawing =================
@@ -840,43 +848,49 @@ class DeviceTab(SimTab):
             fig.colorbar(im, ax=ax, label="V")
         self.plots.draw("Potential")
 
-    def _draw_traj(self, fld, res, info):
+    def _draw_traj(self, fld, res, info, species):
         secs = fld.sections(0.0)
         fig = self.plots.fig("Trajectories")
         if res.traj is None:
             self.plots.draw("Trajectories")
             return
-        fate = res.status[: res.traj.shape[1]]
-        colors = ["tab:blue" if f == 1 else ("tab:red" if f == 2 else "tab:orange") for f in fate]
+        styles = [path_style(res.status[i], res.species[i], len(species)) for i in range(res.traj.shape[1])]
         if fld.kind == "planar2d":
             ax1, ax2 = fig.subplots(1, 2, gridspec_kw={"width_ratios": [1, 2]})
             s = secs[0]
             _outline(ax1, s)
-            for i, c in enumerate(colors):
-                ax1.plot(res.traj[:, i, 0] / MM, res.traj[:, i, 1] / MM, lw=0.5, color=c)
-                ax2.plot(res.traj[:, i, 2] / MM, res.traj[:, i, 0] / MM, lw=0.5, color=c)
+            for i, (c, ls) in enumerate(styles):
+                ax1.plot(res.traj[:, i, 0] / MM, res.traj[:, i, 1] / MM, lw=0.5, color=c, ls=ls)
+                ax2.plot(res.traj[:, i, 2] / MM, res.traj[:, i, 0] / MM, lw=0.5, color=c, ls=ls)
+            species_legend(ax2, species, loc="upper right")
             ax1.set_aspect("equal"); ax1.set_xlabel("x (mm)"); ax1.set_ylabel("y (mm)"); ax1.set_title("end view", fontsize=9)
             ax2.set_xlabel("z (mm)"); ax2.set_ylabel("x (mm)"); ax2.set_title("side view", fontsize=9)
         else:
             axes = np.atleast_1d(fig.subplots(len(secs), 1, sharex=True))
             for ax, s, comp in zip(axes, secs, (0, 1)):
                 _outline(ax, s)
-                for i, c in enumerate(colors):
+                for i, (c, ls) in enumerate(styles):
                     tv = np.hypot(res.traj[:, i, 0], res.traj[:, i, 1]) if fld.kind == "axisym" else res.traj[:, i, comp]
-                    ax.plot(res.traj[:, i, 2] / MM, tv / MM, lw=0.5, color=c)
+                    ax.plot(res.traj[:, i, 2] / MM, tv / MM, lw=0.5, color=c, ls=ls)
                 ax.set_ylabel(s["vl"]); ax.axvline(info["z_end"] / MM, color="k", ls=":", lw=1)
             axes[-1].set_xlabel("z (mm, ion axis)")
-        fig.suptitle("blue: reached the detector, red: hit an electrode, orange: still flying", fontsize=9)
+            species_legend(axes[0], species, loc="upper right")
+        fig.suptitle(fate_caption(len(species)), fontsize=9)
         self.plots.draw("Trajectories")
 
-    def _draw_results(self, res, info):
+    def _draw_results(self, res, info, species):
         fig = self.plots.fig("Results", show=False)
         ax1, ax2 = fig.subplots(1, 2)
         tr = res.status == 1
         if tr.any():
-            ax1.hist(res.t_end[tr] * 1e3, bins=40)
-            p = res.final_pos[tr]
-            ax2.plot(p[:, 0] / MM, p[:, 1] / MM, ".", ms=3)
+            bins = np.linspace(np.nanmin(res.t_end[tr]), np.nanmax(res.t_end[tr]), 41) * 1e3
+            for k, sp in enumerate(species):
+                m = tr & (res.species == k)
+                if m.any():
+                    ax1.hist(res.t_end[m] * 1e3, bins=bins, alpha=0.6, color=species_color(k), label=sp.name)
+                    ax2.plot(res.final_pos[m, 0] / MM, res.final_pos[m, 1] / MM, ".", ms=3, color=species_color(k))
+            if len(species) > 1:
+                ax1.legend(fontsize=7)
         ax1.set_xlabel("arrival time (ms)"); ax1.set_ylabel("ions"); ax1.set_title("Arrival times", fontsize=9)
         ax2.set_xlabel("x (mm)"); ax2.set_ylabel("y (mm)"); ax2.set_title("Where ions cross the detector", fontsize=9)
         ax2.set_aspect("equal", adjustable="datalim")
@@ -914,7 +928,8 @@ class DeviceTab(SimTab):
         d = self.dev.to_dict()
         d["source"] = os.path.relpath(self.dev.source, os.path.dirname(os.path.abspath(path)))
         d["gui"] = {"units": self.units.currentText(), "axis": self.axis.currentText(), "quality": self.quality.currentText(),
-                    "h_mm": self.h.value(), "ions": self.ions.values(), "drive": self.drive.values(), "geo": self.geo.values(),
+                    "h_mm": self.h.value(), "ions": self.ions.values(), "species": self._species_list(),
+                    "drive": self.drive.values(), "geo": self.geo.values(),
                     "extra": self.extra.values(), "flow": self.flow.currentIndex(), "heat": self.heat.values()}
         with open(path, "w") as f:
             json.dump(d, f, indent=1)
@@ -957,6 +972,12 @@ class DeviceTab(SimTab):
             for k, v in gui.get(key, {}).items():
                 if k in form.boxes:
                     form.set(k, v)
+        old = gui.get("ions", {})
+        if gui.get("species"):
+            self.ion_table.from_list(gui["species"])
+        elif "mz" in old:                          # setups from before ion mixtures: one species
+            self.ion_table.set_species([IonSpecies(f"m/z {old['mz']:g}", old["mz"], int(old.get("z", 1)),
+                                                   old.get("K0", 1.0), int(old.get("n", 200)))])
         self.drive.blockSignals(True); self.drive.set("pitch", self.dev.twave.pitch / MM); self.drive.blockSignals(False)
         self._drive_changed()
         self._set_combo(self.quality, gui.get("quality", "Quick"))
@@ -966,6 +987,12 @@ class DeviceTab(SimTab):
         self.log(f"Opened setup {os.path.basename(path)}")
         if missing:
             self.log("  Note: these electrodes are no longer in the file: " + ", ".join(missing))
+
+    def _species_list(self):
+        try:
+            return self.ion_table.to_list()
+        except ValueError:
+            return []
 
     def _adopt_drivers(self):
         """Drivers saved in a setup go into the library. One that differs from the library's
