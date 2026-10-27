@@ -6,15 +6,16 @@ from matplotlib.collections import LineCollection
 from matplotlib.colors import LogNorm
 from PySide6 import QtCore, QtWidgets
 
-from ..funnel import RingFunnel, PlanarFunnel, CadFunnel, FunnelElectrics, run_funnel, pseudopotential
+from ..funnel import RingFunnel, PlanarFunnel, CadFunnel, FunnelElectrics, run_funnel, pseudopotential, gas_flow
 from ..laplace import Drive
 from ..cad import load_bodies, FILE_FILTER, UNITS
 from ..twave import mobility
 from .common import ParamForm, SimTab
-from .electrode_view import ElectrodeView
+from .electrode_view import ElectrodeView, INSULATOR
 
 TYPES = ["Ring funnel (stacked PCBs)", "Planar funnel (two boards)", "Imported CAD (STEP / STL / OBJ)"]
 MODES = ["Trajectories", "Transmission vs m/z"]
+FLOWS = ["Still gas", "Uniform axial speed", "Flow field from gas throughput"]
 MAX_NODES = 40_000_000
 MM = 1e-3
 
@@ -29,7 +30,7 @@ def _entrance_bore(bodies, center):
 
 class FunnelTab(SimTab):
     def __init__(self, parent=None):
-        super().__init__(["Geometry", "Potential", "Trajectories", "Transmission", "Exit beam"], parent)
+        super().__init__(["Geometry", "Potential", "Trajectories", "Transmission", "Exit beam", "Gas flow"], parent)
         self.kind = QtWidgets.QComboBox(); self.kind.addItems(TYPES)
         kind_box = QtWidgets.QGroupBox("Funnel type")
         QtWidgets.QVBoxLayout(kind_box).addWidget(self.kind)
@@ -45,8 +46,12 @@ class FunnelTab(SimTab):
             ("exit_id", "Exit orifice diameter", r.exit_id / MM, 0.1, 50, 2, 0.1, "mm"),
             ("exit_gap", "Last ring to exit plate", r.exit_gap / MM, 0.1, 20, 2, 0.1, "mm"),
             ("exit_t", "Exit plate thickness", r.exit_thickness / MM, 0.02, 10, 2, 0.1, "mm"),
+            ("cu_w", "Copper ring width (0 = metal plate)", r.copper_width / MM, 0, 200, 2, 0.5, "mm"),
+            ("eps", "Board εr (FR4 4.4)", r.board_eps, 1, 100, 2, 0.1, ""),
             ("h", "Grid spacing", r.h / MM, 0.005, 1, 3, 0.01, "mm"),
         ])
+        self.ring.boxes["cu_w"].setToolTip("PCB rings: copper around the bore (plated through, both faces), "
+                                           "FR4 board beyond it out to the plate diameter")
         self.planar = ParamForm("Planar funnel (boards at ±gap/2)", [
             ("n", "Strips per board", p.n_strips, 3, 1000, 0, 1, ""),
             ("pitch", "Strip pitch", p.pitch / MM, 0.1, 20, 3, 0.1, "mm"),
@@ -61,6 +66,8 @@ class FunnelTab(SimTab):
             ("ex_h", "Exit slit height (y)", p.exit_height / MM, 0.1, 50, 2, 0.1, "mm"),
             ("exit_gap", "Last strip to exit plate", p.exit_gap / MM, 0.1, 20, 2, 0.1, "mm"),
             ("exit_t", "Exit plate thickness", p.exit_thickness / MM, 0.02, 10, 2, 0.1, "mm"),
+            ("board_t", "Board thickness (0 = none)", p.board_thickness / MM, 0, 20, 2, 0.1, "mm"),
+            ("eps", "Board εr (FR4 4.4)", p.board_eps, 1, 100, 2, 0.1, ""),
             ("h", "Grid spacing", p.h / MM, 0.02, 2, 3, 0.02, "mm"),
         ])
         self.cad_box = self._build_cad_box()
@@ -77,7 +84,20 @@ class FunnelTab(SimTab):
             ("p", "Pressure", 2.0, 0.01, 100, 3, 0.1, "Torr"),
             ("T", "Temperature", 300, 50, 1000, 0, 5, "K"),
             ("u", "Axial gas speed", 0.0, -2000, 2000, 1, 5, "m/s"),
+            ("slm", "Gas throughput", 1.0, 0.001, 100, 3, 0.1, "slm"),
+            ("r_in", "Gas inlet radius (0 = entrance bore)", 0.0, 0, 500, 2, 0.5, "mm"),
         ])
+        self.flow = QtWidgets.QComboBox(); self.flow.addItems(FLOWS)
+        self.flow.setToolTip("Flow field: viscous flow from the inlet disc on the entrance face, pumped out through every "
+                             "other open side (between electrodes, through the exit), scaled to the throughput")
+        self.gas.layout().insertRow(2, "Gas flow", self.flow)
+        self.flow.currentIndexChanged.connect(self._flow_changed)
+        self.space = ParamForm("Space charge", [
+            ("I", "Ion current (0 = off)", 0.0, 0, 1e6, 3, 1, "nA"),
+            ("it", "Iterations", 4, 1, 30, 0, 1, ""),
+        ])
+        self.space.setToolTip("The ions are flown several times; each flight's charge (current x time spent) "
+                              "sets the space-charge field for the next. Each iteration costs one more flight.")
         self.ions = ParamForm("Ions", [
             ("mz", "m/z", 500, 1, 1e6, 1, 10, ""),
             ("z", "Charge state", 1, 1, 100, 0, 1, ""),
@@ -97,17 +117,19 @@ class FunnelTab(SimTab):
             ("per", "Ions per point", 60, 5, 10000, 0, 10, ""),
             ("expo", "K0 ∝ (m/z)^-n, n =", 0.667, 0, 2, 3, 0.05, ""),
         ])
-        for w in (kind_box, self.ring, self.planar, self.cad_box, self.elec, self.gas, self.ions, mode_box, self.scan):
+        for w in (kind_box, self.ring, self.planar, self.cad_box, self.elec, self.gas, self.space, self.ions, mode_box, self.scan):
             self.form_layout.addWidget(w)
         self.form_layout.addStretch(1)
 
         self.bodies, self.cad_path = None, None
         self._geo_cache = None        # (key, grid, solver, last phi parts for warm starts)
+        self._flow_cache = None       # (key, GasFlow)
         self.kind.currentIndexChanged.connect(self._kind_changed)
         self.mode.currentIndexChanged.connect(lambda i: self.scan.setVisible(i == 1))
         self.ring.changed.connect(self._preview); self.planar.changed.connect(self._preview)
         self.run_btn.clicked.connect(self.run)
         self.scan.setVisible(False)
+        self._flow_changed()
         self._kind_changed()
 
     # ---------- imported geometry ----------
@@ -144,8 +166,10 @@ class FunnelTab(SimTab):
         self.cad_grid.changed.connect(self._cad_info)
         self.cad_grid.changed.connect(self._preview)
         v.addWidget(self.cad_grid)
-        self.table = QtWidgets.QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Body", "DC (V)", "RF 0-pk (V)", "RF phase (°)"])
+        self.table = QtWidgets.QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["Body", "DC (V)", "RF 0-pk (V)", "RF phase (°)", "Insulator εr"])
+        self.table.horizontalHeaderItem(4).setToolTip("Leave blank for an electrode. A number makes the body an "
+                                                     "insulator (PCB, spacer) with that relative permittivity.")
         self.table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setMinimumHeight(200)
@@ -190,6 +214,9 @@ class FunnelTab(SimTab):
         if name is None:
             self.status.setText("Ready")
             return
+        if name in self._cad_dielectrics():
+            self.status.setText(f"{name}: insulator, εr {self._cad_dielectrics()[name]:g}")
+            return
         d = self._cad_drives().get(name)
         if d is not None:
             self.status.setText(f"{name}: DC {d.dc:g} V, RF {d.rf:g} V at {d.phase:g}°")
@@ -202,7 +229,7 @@ class FunnelTab(SimTab):
         except Exception:
             return
         sel = {self.table.item(i.row(), 0).text() for i in self.table.selectedIndexes()}
-        self.cad_view.paint({n: d.dc for n, d in drives.items()}, sel)
+        self.cad_view.paint({n: d.dc for n, d in drives.items()}, sel, insulators=self._cad_dielectrics())
         self.plots.draw("Geometry")
 
     def _load_cad(self):
@@ -245,22 +272,40 @@ class FunnelTab(SimTab):
     def _auto_assign(self):
         if not self.bodies:
             return
-        d = CadFunnel(self.bodies).funnel_pattern(self._electrics(), self.last_exit.isChecked())
+        d = CadFunnel(self.bodies, dielectrics=self._cad_dielectrics()).funnel_pattern(self._electrics(), self.last_exit.isChecked())
+        self.table.blockSignals(True)
         for r in range(self.table.rowCount()):
-            dr = d[self.table.item(r, 0).text()]
-            for c, val in enumerate([dr.dc, dr.rf, dr.phase], start=1):
-                self.table.setItem(r, c, QtWidgets.QTableWidgetItem(f"{round(val, 3):g}"))
+            dr = d.get(self.table.item(r, 0).text())
+            for c, val in enumerate([dr.dc, dr.rf, dr.phase] if dr else ["", "", ""], start=1):
+                self.table.setItem(r, c, QtWidgets.QTableWidgetItem(val if isinstance(val, str) else f"{round(val, 3):g}"))
+        self.table.blockSignals(False)
+        self._repaint_cad()
 
     def _cad_drives(self):
-        out = {}
+        out, diel = {}, self._cad_dielectrics()
         for r in range(self.table.rowCount()):
             cell = lambda c: (self.table.item(r, c).text() if self.table.item(r, c) else "").strip() or "0"
-            out[self.table.item(r, 0).text()] = Drive(float(cell(1)), float(cell(2)), float(cell(3)))
+            name = self.table.item(r, 0).text()
+            if name not in diel:
+                out[name] = Drive(float(cell(1)), float(cell(2)), float(cell(3)))
+        return out
+
+    def _cad_dielectrics(self):
+        """Bodies with a permittivity in the Insulator column: {name: eps_r}."""
+        out = {}
+        for r in range(self.table.rowCount()):
+            it = self.table.item(r, 4)
+            txt = it.text().strip() if it else ""
+            try:
+                if txt and float(txt) > 0:
+                    out[self.table.item(r, 0).text()] = float(txt)
+            except ValueError:
+                pass
         return out
 
     def _cad(self):
         c = self.cad_grid.values()
-        return CadFunnel(self.bodies, h=c["h"] * MM, pad=c["pad"] * MM)
+        return CadFunnel(self.bodies, h=c["h"] * MM, pad=c["pad"] * MM, dielectrics=self._cad_dielectrics())
 
     def _cad_info(self, *_):
         if self.bodies:
@@ -279,12 +324,13 @@ class FunnelTab(SimTab):
         if k == 0:
             v = self.ring.values()
             return RingFunnel(int(v["n"]), v["pitch"] * MM, v["thick"] * MM, v["id_in"] * MM, v["id_out"] * MM,
-                              int(v["straight"]), v["od"] * MM, v["exit_id"] * MM, v["exit_gap"] * MM, v["exit_t"] * MM, v["h"] * MM)
+                              int(v["straight"]), v["od"] * MM, v["exit_id"] * MM, v["exit_gap"] * MM, v["exit_t"] * MM, v["h"] * MM,
+                              v["cu_w"] * MM, v["eps"])
         if k == 1:
             v = self.planar.values()
             return PlanarFunnel(int(v["n"]), v["pitch"] * MM, v["w"] * MM, v["gap"] * MM, v["w_in"] * MM, v["w_out"] * MM,
                                 int(v["straight"]), v["g_gap"] * MM, v["g_band"] * MM, v["ex_w"] * MM, v["ex_h"] * MM,
-                                v["exit_gap"] * MM, v["exit_t"] * MM, v["h"] * MM)
+                                v["exit_gap"] * MM, v["exit_t"] * MM, v["h"] * MM, v["board_t"] * MM, v["eps"])
         if not self.bodies:
             raise ValueError("Load a geometry file first")
         return self._cad()
@@ -295,6 +341,22 @@ class FunnelTab(SimTab):
         self.elec.boxes["guard"].setEnabled(k == 1)
         self.ions.set("r0", {0: 8.0, 1: 1.5, 2: self.ions.values()["r0"]}[k])
         self._preview()
+
+    def _flow_changed(self, *_):
+        k = self.flow.currentIndex()
+        self.gas.boxes["u"].setEnabled(k == 1)
+        self.gas.boxes["slm"].setEnabled(k == 2); self.gas.boxes["r_in"].setEnabled(k == 2)
+
+    def _inlet_radius(self, geo, start):
+        r = self.gas.values()["r_in"] * MM
+        if r > 0:
+            return r
+        if isinstance(geo, RingFunnel):
+            return geo.id_in / 2
+        if isinstance(geo, PlanarFunnel):
+            return geo.gap / 2
+        bore = _entrance_bore(self.bodies, start)
+        return bore or 3 * MM
 
     # ---------- plots ----------
     def _preview(self, *_):
@@ -309,13 +371,18 @@ class FunnelTab(SimTab):
             return
         if k == 0:
             ax = fig.add_subplot(111)
+            for r0, r1, z0, z1 in geo.boards():
+                for s in (1, -1):
+                    ax.add_patch(_rect(z0, s * r0, z1 - z0, s * (r1 - r0), INSULATOR))
             for name, r0, r1, z0, z1 in geo.rings():
                 c = "0.35" if name == "exit plate" else "tab:orange"
                 for s in (1, -1):
                     ax.add_patch(_rect(z0, s * r0, z1 - z0, s * (r1 - r0), c))
             ax.set_xlim(-2, geo.z_end / MM + 2); ax.set_ylim(-geo.od / 2 / MM - 1, geo.od / 2 / MM + 1)
             ax.set_xlabel("z (mm)"); ax.set_ylabel("r (mm)")
-            ax.set_title(f"{geo.n_rings} rings, ID {geo.id_in / MM:.1f} → {geo.id_out / MM:.1f} mm, exit orifice {geo.exit_id / MM:.1f} mm")
+            ax.set_title(f"{geo.n_rings} rings, ID {geo.id_in / MM:.1f} → {geo.id_out / MM:.1f} mm, exit orifice {geo.exit_id / MM:.1f} mm"
+                         + (f"\ncopper (orange) {geo.copper_width / MM:g} mm wide on boards εr {geo.board_eps:g} (tan)" if geo.boards() else ""),
+                         fontsize=9)
         elif k == 1:
             ax1, ax2 = fig.subplots(2, 1, sharex=True, gridspec_kw={"height_ratios": [3, 1]})
             w = geo.strip_width / 2
@@ -328,8 +395,11 @@ class FunnelTab(SimTab):
                 ax1.add_patch(_rect(geo.z_plate, s * ex, geo.exit_thickness, s * (geo.x_edge - ex), "0.35"))
                 ax2.add_patch(_rect(geo.z_plate, s * geo.exit_height / 2, geo.exit_thickness, s * (geo.gap / 2 - geo.exit_height / 2), "0.35"))
                 ax2.plot(geo.strip_z() / MM, np.full(geo.n_strips, s * geo.gap / 2 / MM), "|", color="tab:orange", ms=6)
+                if geo.board_thickness > 0:
+                    zb = geo.strip_z()[0] - geo.pitch
+                    ax2.add_patch(_rect(zb, s * geo.gap / 2, geo.strip_z()[-1] + geo.pitch / 2 - zb, s * geo.board_thickness, INSULATOR))
             ax1.set_xlim(-2, geo.z_end / MM + 2); ax1.set_ylim(-geo.x_edge / MM - 1, geo.x_edge / MM + 1)
-            ax2.set_ylim(-geo.gap / MM, geo.gap / MM)
+            ax2.set_ylim(-(geo.gap / 2 + geo.board_thickness) / MM - 0.5, (geo.gap / 2 + geo.board_thickness) / MM + 0.5)
             ax1.set_ylabel("x (mm)"); ax2.set_ylabel("y (mm)"); ax2.set_xlabel("z (mm)")
             ax1.set_title("Board face: RF strips (orange), DC guards (blue), exit plate (grey)")
         else:
@@ -347,7 +417,7 @@ class FunnelTab(SimTab):
                         self.cad_view.add(name, lc)
             try:
                 drives = self._cad_drives()
-                sm = self.cad_view.paint({n: d.dc for n, d in drives.items()})
+                sm = self.cad_view.paint({n: d.dc for n, d in drives.items()}, insulators=self._cad_dielectrics())
                 fig.colorbar(sm, ax=ax2, label="DC voltage (V)")
             except Exception:
                 pass
@@ -376,7 +446,8 @@ class FunnelTab(SimTab):
         if k == 2:
             c = self.cad_grid.values()
             start, z0, z1 = (c["x0"] * MM, c["y0"] * MM), c["z0"] * MM, c["z1"] * MM
-            nodes, key = geo.nodes(), ("cad", self.cad_path, self.units.currentText(), self.axis.currentText(), c["h"], c["pad"])
+            nodes, key = geo.nodes(), ("cad", self.cad_path, self.units.currentText(), self.axis.currentText(), c["h"], c["pad"],
+                                       tuple(sorted(geo.dielectrics.items())))
         else:
             start, z0, z1 = (0.0, 0.0), geo.z_start, geo.z_end
             nodes, key = None, (k, repr(geo))
@@ -384,6 +455,10 @@ class FunnelTab(SimTab):
             self.log(f"Grid would have {nodes / 1e6:.0f} M nodes; raise the grid spacing (limit {MAX_NODES / 1e6:.0f} M).")
             return
         cache = self._geo_cache if self._geo_cache and self._geo_cache[0] == key else None
+        flow_mode, current, sc_it = self.flow.currentIndex(), self.space.values()["I"] * 1e-9, int(self.space.values()["it"])
+        r_in = self._inlet_radius(geo, start) if flow_mode == 2 else 0.0
+        flow_key = (key, gs["slm"], gs["p"], gs["T"], r_in, start)
+        flow_cache = self._flow_cache[1] if flow_mode == 2 and cache and self._flow_cache and self._flow_cache[0] == flow_key else None
         if mode == 0:
             mz = np.array([io["mz"]]); K0 = np.array([io["K0"]]); n, rec = int(io["n"]), min(int(io["n"]), 40)
         else:
@@ -402,12 +477,18 @@ class FunnelTab(SimTab):
                 solver = grid.solver()
             fld = geo.field(drives, el.freq, grid, solver, guess) if k == 2 else geo.field(el, grid, solver, guess)
             t_solve = time.time() - t0
+            flow, gas_u = None, (gs["u"] if flow_mode == 1 else 0.0)
+            if flow_mode == 2:
+                flow = flow_cache or gas_flow(fld, gs["slm"], gs["p"], gs["T"], r_in, start)
+                gas_u = flow
+            t1 = time.time()
             res, mzi = run_funnel(fld, z0, z1, mz, K0, n, gs["p"], gs["T"], int(io["z"]), io["r0"] * MM, start,
-                                  int(io["steps"]), io["tmax"] * 1e-3 or None, el.gradient, gs["u"], rec,
-                                  progress=progress)
+                                  int(io["steps"]), io["tmax"] * 1e-3 or None, el.gradient, gas_u, rec,
+                                  progress=progress, current=current, sc_iterations=sc_it)
             return {"key": key, "grid": grid, "solver": solver, "field": fld, "res": res, "mzi": mzi, "mz": mz,
                     "K0": K0, "mode": mode, "t_solve": t_solve, "cached": bool(cache), "start": start, "z": (z0, z1),
-                    "gas": gs, "io": io, "el": el}
+                    "gas": gs, "io": io, "el": el, "flow": flow, "flow_key": flow_key, "r_in": r_in,
+                    "current": current, "t_fly": time.time() - t1}
 
         # while the geometry is unchanged the grid and solver are reused: new voltages only re-solve
         self.start(job, self._show, "Flying ions..." if cache else "Solving fields...")
@@ -417,7 +498,25 @@ class FunnelTab(SimTab):
         res, mzi, el = out["res"], out["mzi"], out["el"]
         g = out["grid"]
         what = "reused solver" if out["cached"] else f"{g.nodes / 1e6:.2f} M nodes"
-        self.log(f"Fields: {len(g.names)} electrodes, {what}, ready in {out['t_solve']:.1f} s")
+        ins = "" if g.insulator is None else f", insulators on {g.insulator.mean():.0%} of the grid"
+        self.log(f"Fields: {len(g.names)} electrodes{ins}, {what}, ready in {out['t_solve']:.1f} s")
+        if out["flow"] is not None:
+            f = out["flow"]
+            self._flow_cache = (out["flow_key"], f)
+            self.log(f"Gas flow: {out['gas']['slm']:g} slm at {out['gas']['p']:g} Torr enters a {2 * out['r_in'] / MM:.1f} mm "
+                     f"disc at {f.inlet_speed:.1f} m/s mean; {f.exit_fraction:.1%} leaves through the exit end, the rest "
+                     "is pumped out between the electrodes")
+            if f.warning(out["gas"]["T"]):
+                self.log("  Note: " + f.warning(out["gas"]["T"]))
+            self._draw_flow(out)
+        if res.sc_history:
+            h = res.sc_history
+            self.log(f"Space charge at {out['current'] * 1e9:g} nA: peak potential "
+                     + " → ".join(f"{p:.3g}" for _, p, _ in h) + f" V over {len(h)} solves, "
+                     f"{h[-1][2] / 1.602e-19:.3g} charges in the device"
+                     + ("" if res.sc_converged else "  (NOT settled: raise the iterations, or the current is more "
+                                                    "than this funnel carries and ions pile up)"))
+        self.log(f"Flown in {out['t_fly']:.1f} s")
         self._draw_potential(out)
         if out["mode"] == 0:
             st = res.status
@@ -451,25 +550,33 @@ class FunnelTab(SimTab):
     def _draw_potential(self, out):
         fld, el, io = out["field"], out["el"], out["io"]
         sec = fld.sections(out["start"])
+        sc = out["res"].space_charge
         fig = self.plots.fig("Potential", show=False)
-        axes = fig.subplots(2, 1, sharex=True)
+        axes = fig.subplots(3 if sc is not None else 2, 1, sharex=True)
         s = sec["x"]
         Z, A = s["z"] / MM, s["coords"] / MM
-        im = axes[0].imshow(np.ma.masked_where(s["mask"], s["dc"]), origin="lower", aspect="auto", cmap="viridis",
+        solid = s["mask"] if s.get("insulator") is None else s["mask"] | s["insulator"]
+        im = axes[0].imshow(np.ma.masked_where(solid, s["dc"]), origin="lower", aspect="auto", cmap="viridis",
                             extent=[Z[0], Z[-1], A[0], A[-1]])
         fig.colorbar(im, ax=axes[0], label="V")
         e2 = sum(sum(gg ** 2 for gg in np.gradient(p, s["h"])) for p in s["rf"]) * 0.5
         K = mobility(io["K0"], out["gas"]["p"], out["gas"]["T"])
         U = pseudopotential(e2, io["mz"], int(io["z"]), K, el.freq)
-        im = axes[1].imshow(np.ma.masked_where(s["mask"], np.clip(U, 1e-3, 10)), origin="lower", aspect="auto", cmap="magma",
+        im = axes[1].imshow(np.ma.masked_where(solid, np.clip(U, 1e-3, 10)), origin="lower", aspect="auto", cmap="magma",
                             extent=[Z[0], Z[-1], A[0], A[-1]], norm=LogNorm(1e-3, 10))
         fig.colorbar(im, ax=axes[1], label="V")
+        if sc is not None:
+            phi = _section_of(sc.phi, fld, out["start"])
+            im = axes[2].imshow(np.ma.masked_where(solid, phi), origin="lower", aspect="auto", cmap="inferno",
+                                extent=[Z[0], Z[-1], A[0], A[-1]])
+            fig.colorbar(im, ax=axes[2], label="V")
+            axes[2].set_title(f"Space-charge potential of the {out['current'] * 1e9:g} nA beam", fontsize=9)
         for ax in axes:
-            ax.contourf(Z, A, s["mask"].astype(float), levels=[0.5, 1.5], colors="0.55")
+            _outline(ax, s)
             ax.set_ylabel("x (mm)")
         axes[0].set_title("DC potential (x-z section)", fontsize=9)
         axes[1].set_title(f"RF effective potential for m/z {io['mz']:g} (log scale)", fontsize=9)
-        axes[1].set_xlabel("z (mm)")
+        axes[-1].set_xlabel("z (mm)")
         self.plots.draw("Potential")
 
     def _draw_traj(self, out):
@@ -479,7 +586,7 @@ class FunnelTab(SimTab):
         axes = fig.subplots(2, 1, sharex=True)
         for ax, key, c in ((axes[0], "x", 0), (axes[1], "y", 1)):
             s = sec[key]
-            ax.contourf(s["z"] / MM, s["coords"] / MM, s["mask"].astype(float), levels=[0.5, 1.5], colors="0.6")
+            _outline(ax, s)
             if res.traj is not None:
                 fate = res.status[: res.traj.shape[1]]
                 for i in range(res.traj.shape[1]):
@@ -504,6 +611,42 @@ class FunnelTab(SimTab):
             ax2.hist(res.t_end[tr] * 1e3, bins=40)
         ax2.set_xlabel("transit time (ms)"); ax2.set_ylabel("ions"); ax2.set_title("Transit time", fontsize=9)
         self.plots.draw("Exit beam")
+
+
+    def _draw_flow(self, out):
+        sec = out["flow"].section(out["start"])
+        fig = self.plots.fig("Gas flow", show=False)
+        ax = fig.add_subplot(111)
+        Z, A = sec["z"] / MM, sec["coords"] / MM
+        speed = np.ma.masked_where(sec["mask"], np.hypot(sec["ut"], sec["uz"]))
+        vmax = float(np.percentile(speed.compressed(), 99)) if speed.count() else 1.0
+        im = ax.imshow(speed, origin="lower", aspect="auto", cmap="viridis", extent=[Z[0], Z[-1], A[0], A[-1]], vmax=vmax)
+        fig.colorbar(im, ax=ax, label="gas speed (m/s)", extend="max")
+        ax.streamplot(Z, A, np.where(sec["mask"], 0, sec["uz"]), np.where(sec["mask"], 0, sec["ut"]),
+                      color="w", density=1.2, linewidth=0.6, arrowsize=0.7)
+        ax.contourf(Z, A, sec["mask"].astype(float), levels=[0.5, 1.5], colors="0.55")
+        ax.set_xlim(Z[0], Z[-1]); ax.set_ylim(A[0], A[-1])
+        ax.set_xlabel("z (mm)"); ax.set_ylabel("x (mm)")
+        ax.set_title(f"Gas flow, {out['gas']['slm']:g} slm at {out['gas']['p']:g} Torr (viscous, pumped through every open side); "
+                     f"{out['flow'].exit_fraction:.1%} through the exit", fontsize=9)
+        self.plots.draw("Gas flow")
+
+
+def _outline(ax, s):
+    """Electrodes grey, insulators in board colour, on a section dict."""
+    ax.contourf(s["z"] / MM, s["coords"] / MM, s["mask"].astype(float), levels=[0.5, 1.5], colors="0.55")
+    if s.get("insulator") is not None and s["insulator"].any():
+        ax.contourf(s["z"] / MM, s["coords"] / MM, (s["insulator"] & ~s["mask"]).astype(float), levels=[0.5, 1.5],
+                    colors=[INSULATOR])
+
+
+def _section_of(arr, fld, center):
+    """The x-z section of a node array of the field's grid (same plane as fld.sections)."""
+    g = fld.grid
+    if hasattr(g, "r"):
+        return np.concatenate([arr[:0:-1], arr], axis=0)
+    jy = int(np.clip(round((center[1] - g.y[0]) / g.h), 0, g.shape[1] - 1))
+    return arr[:, jy, :]
 
 
 def _mesh_section(tris, cut, keep, at):

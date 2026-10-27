@@ -9,16 +9,17 @@ from matplotlib.path import Path
 from matplotlib.collections import LineCollection
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from ..device import KINDS, QUALITY, Device, DeviceField, from_drawing, from_bodies, fly_device
+from ..device import KINDS, QUALITY, Device, DeviceField, from_drawing, from_bodies, fly_device, device_gas_flow
 from ..cad import CAD_EXT, MESH_EXT, UNITS, load_bodies
 from .common import ParamForm, SimTab
-from .electrode_view import ElectrodeView
+from .electrode_view import ElectrodeView, INSULATOR
+from .funnel_tab import FLOWS
 
 MM = 1e-3
 DXF_KINDS = ["planar2d", "axisym", "boards"]
 PATTERNS = ["Fixed voltage", "DC gradient along the ion axis", "TWAVE phases", "Ground (0 V, no RF)",
             "Remove from TWAVE"]
-COLS = ["Electrode", "Layer", "DC (V)", "RF 0-pk (V)", "RF phase (°)", "TWAVE phase", "Set by"]
+COLS = ["Electrode", "Layer", "DC (V)", "RF 0-pk (V)", "RF phase (°)", "TWAVE phase", "Set by", "Insulator εr"]
 FILE_FILTER = "Geometry (*.dxf *.step *.stp *.iges *.igs *.brep *.stl *.obj *.ply *.off *.glb *.gltf)"
 MAX_NODES = 40_000_000
 
@@ -32,13 +33,14 @@ def examples_dir():
 
 class DeviceTab(SimTab):
     def __init__(self, parent=None):
-        super().__init__(["Geometry", "Potential", "Trajectories", "Results"], parent)
+        super().__init__(["Geometry", "Potential", "Trajectories", "Results", "Gas flow"], parent)
         self.dev = None
         self.grid = None            # (key, DeviceGrid)
         self.field = None           # last DeviceField (warm start)
         self.selected = set()
         self._building_table = False
         self._project_dir = None
+        self._flow = None           # (key, GasFlow)
 
         # ---- 1. geometry ----
         box = QtWidgets.QGroupBox("1. Geometry")
@@ -69,7 +71,11 @@ class DeviceTab(SimTab):
         self.geo = ParamForm("", [
             ("gap", "Board gap (boards)", 2.75, 0.05, 100, 3, 0.05, "mm"),
             ("length", "Length along ion axis (2D)", 100.0, 0.1, 10000, 1, 10, "mm"),
+            ("bt", "PCB substrate behind pads (0 = none)", 1.6, 0, 50, 3, 0.1, "mm"),
+            ("beps", "Substrate εr (FR4 4.4)", 4.4, 1, 100, 2, 0.1, ""),
         ])
+        self.geo.boxes["bt"].setToolTip("Boards: an insulating board of this thickness behind the pads, "
+                                        "with a ground plane on its back face")
         self.geo.setFlat(True)
         self.both = QtWidgets.QCheckBox("Same pads on both boards"); self.both.setChecked(True)
         self.open_in = QtWidgets.QCheckBox("Open entrance (ions arrive from upstream)"); self.open_in.setChecked(True)
@@ -92,6 +98,8 @@ class DeviceTab(SimTab):
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
         self.table.setMinimumHeight(220)
+        self.table.horizontalHeaderItem(7).setToolTip("Blank or 0: an electrode. A number makes the part an insulator "
+                                                     "(PCB, spacer) with that relative permittivity; it carries no voltage.")
         self.table.itemSelectionChanged.connect(self._table_selection)
         self.table.itemChanged.connect(self._table_edit)
         v.addWidget(self.table)
@@ -167,6 +175,20 @@ class DeviceTab(SimTab):
             ("tmax", "Max time (0 = auto)", 0.0, 0, 1e7, 3, 1, "ms"),
         ])
         self.form_layout.addWidget(self.ions)
+
+        # ---- 7. gas flow and space charge ----
+        self.extra = ParamForm("7. Gas flow and space charge", [
+            ("slm", "Gas throughput", 1.0, 0.001, 1000, 3, 0.1, "slm"),
+            ("r_in", "Gas inlet radius (disc at the entrance, about the ion start)", 2.0, 0.01, 1000, 3, 0.5, "mm"),
+            ("I", "Ion current (0 = no space charge)", 0.0, 0, 1e6, 3, 1, "nA"),
+            ("it", "Space-charge iterations", 4, 1, 30, 0, 1, ""),
+        ])
+        self.flow = QtWidgets.QComboBox(); self.flow.addItems(FLOWS)
+        self.flow.setToolTip("Uniform uses the gas speed in 6. Flow field: viscous flow from the inlet disc, "
+                             "pumped out through every other open side (axisymmetric and 3D devices)")
+        self.extra.layout().insertRow(0, "Gas flow", self.flow)
+        self.flow.currentIndexChanged.connect(self._flow_changed)
+        self.form_layout.addWidget(self.extra)
         self.form_layout.addStretch(1)
 
         self.scroll.setMinimumWidth(470)
@@ -180,6 +202,7 @@ class DeviceTab(SimTab):
         self.view = ElectrodeView(self.plots.figs["Geometry"].canvas, self._picked, self._hovered)
         self._pattern_changed()
         self._drive_changed()
+        self._flow_changed()
         self._show_rows()
         self._draw_geometry()
 
@@ -227,8 +250,7 @@ class DeviceTab(SimTab):
             item.setEnabled((self.kind.itemData(i) == "cad3d") == (dev.kind == "cad3d"))
         self._set_combo(self.kind, dev.kind, data=True)
         self.kind.blockSignals(False)
-        dev.board_gap, dev.length = self.geo.values()["gap"] * MM, self.geo.values()["length"] * MM
-        dev.both_boards, dev.open_entrance = self.both.isChecked(), self.open_in.isChecked()
+        self._geo_to_device(dev)
         self._drive_to_device()
         layers = sorted({e.layer for e in dev.electrodes if e.layer})
         self.layer.clear(); self.layer.addItems(layers or ["(no layers)"])
@@ -265,6 +287,7 @@ class DeviceTab(SimTab):
         k = self.dev.kind if self.dev else self.kind.currentData()
         lay = self.geo.layout()
         lay.setRowVisible(0, k == "boards"); lay.setRowVisible(1, k == "planar2d")
+        lay.setRowVisible(2, k == "boards"); lay.setRowVisible(3, k == "boards")
         self.both.setVisible(k == "boards")
         self.axis.setEnabled(k == "cad3d")
 
@@ -272,12 +295,22 @@ class DeviceTab(SimTab):
         if self.dev is None:
             return
         g = self.geo.values()
-        self.dev.board_gap, self.dev.length = g["gap"] * MM, g["length"] * MM
-        self.dev.both_boards, self.dev.open_entrance = self.both.isChecked(), self.open_in.isChecked()
+        self._geo_to_device(self.dev)
         self.grid = self.field = None
         if self.dev.kind == "planar2d":
             self.ions.set("z1", g["length"])
         self._quality_changed()
+
+    def _geo_to_device(self, dev):
+        g = self.geo.values()
+        dev.board_gap, dev.length = g["gap"] * MM, g["length"] * MM
+        dev.board_thickness, dev.board_eps = g["bt"] * MM, g["beps"]
+        dev.both_boards, dev.open_entrance = self.both.isChecked(), self.open_in.isChecked()
+
+    def _flow_changed(self, *_):
+        k = self.flow.currentIndex()
+        self.ions.boxes["u"].setEnabled(k == 1)
+        self.extra.boxes["slm"].setEnabled(k == 2); self.extra.boxes["r_in"].setEnabled(k == 2)
 
     def _default_ion_path(self):
         lo, hi = self.dev.extent()
@@ -300,7 +333,8 @@ class DeviceTab(SimTab):
         t.setRowCount(0)
         for e in self.dev.electrodes:
             r = t.rowCount(); t.insertRow(r)
-            vals = [e.name, e.layer, f"{e.dc:.4g}", f"{e.rf:.4g}", f"{e.phase:.4g}", "" if e.tw < 0 else str(e.tw + 1), e.role]
+            vals = [e.name, e.layer, f"{e.dc:.4g}", f"{e.rf:.4g}", f"{e.phase:.4g}", "" if e.tw < 0 else str(e.tw + 1), e.role,
+                    f"{e.eps:g}" if e.eps > 0 else ""]
             for c, val in enumerate(vals):
                 it = QtWidgets.QTableWidgetItem(val)
                 if c in (0, 1, 6):
@@ -313,7 +347,7 @@ class DeviceTab(SimTab):
         self._building_table = True
         for r, e in enumerate(self.dev.electrodes):
             for c, val in ((2, f"{e.dc:.4g}"), (3, f"{e.rf:.4g}"), (4, f"{e.phase:.4g}"),
-                           (5, "" if e.tw < 0 else str(e.tw + 1)), (6, e.role)):
+                           (5, "" if e.tw < 0 else str(e.tw + 1)), (6, e.role), (7, f"{e.eps:g}" if e.eps > 0 else "")):
                 self.table.item(r, c).setText(val)
         self._building_table = False
 
@@ -335,7 +369,10 @@ class DeviceTab(SimTab):
             e.phase = val
         elif c == 5:
             e.tw = int(val) - 1 if val >= 1 else -1
-        e.role = "edited"
+        elif c == 7:
+            e.eps = max(val, 0.0)
+            self.grid = self.field = None
+        e.role = "insulator" if e.eps > 0 else "edited"
         self._refresh_rows()
         self._repaint()
 
@@ -377,6 +414,9 @@ class DeviceTab(SimTab):
             self.hover.setText(" ")
             return
         e = self.dev.get(name)
+        if e.eps > 0:
+            self.hover.setText(f"<b>{name}</b> ({e.layer or 'no layer'}): insulator, εr {e.eps:g}")
+            return
         txt = f"<b>{name}</b> ({e.layer or 'no layer'}): DC {e.dc:.4g} V"
         if e.rf:
             txt += f", RF {e.rf:.4g} V at {e.phase:g}°"
@@ -467,7 +507,7 @@ class DeviceTab(SimTab):
         elif self.dev.kind == "axisym":
             n = ((hi[0] + pad / 2) / h) * ((size[2] + pad) / h)
         elif self.dev.kind == "boards":
-            n = ((size[0] + pad) / h) * ((self.dev.board_gap + 8 * h) / h) * ((size[2] + pad) / h)
+            n = ((size[0] + pad) / h) * ((self.dev.board_gap + 2 * self.dev.board_thickness + 8 * h) / h) * ((size[2] + pad) / h)
         else:
             n = np.prod((size + pad) / h)
         dim = "2D" if self.dev.kind in ("planar2d", "axisym") else "3D"
@@ -478,7 +518,8 @@ class DeviceTab(SimTab):
 
     def _grid_key(self):
         return (self.dev.source, self.dev.kind, self.units.currentText(), self.axis.currentText(), self.dev.board_gap,
-                self.dev.both_boards, self.dev.length, self.dev.open_entrance, round(self.h.value(), 6))
+                self.dev.both_boards, self.dev.length, self.dev.open_entrance, round(self.h.value(), 6),
+                self.dev.board_thickness, self.dev.board_eps, tuple(e.eps for e in self.dev.electrodes))
 
     def check_geometry(self):
         if self.dev is None:
@@ -512,6 +553,12 @@ class DeviceTab(SimTab):
         dg = self.grid[1] if self.grid and self.grid[0] == key else None
         prev = self.field if dg is not None else None
         io = self.ions.values()
+        ex, flow_mode = self.extra.values(), self.flow.currentIndex()
+        if flow_mode == 2 and self.dev.kind == "planar2d":
+            self._error("Gas flow", "A 2D cross-section has no flow pattern along the axis: use a uniform gas speed.")
+            return
+        flow_key = (key, ex["slm"], io["p"], io["T"], ex["r_in"], io["x0"], io["y0"])
+        flow_cached = self._flow[1] if flow_mode == 2 and dg is not None and self._flow and self._flow[0] == flow_key else None
         h = self.h.value() * MM
         dev = self.dev
 
@@ -523,14 +570,20 @@ class DeviceTab(SimTab):
                 g = dev.build(h)
             t1 = time.time()
             fld = DeviceField(g, prev, progress=lambda f: progress(0.3 * f))
+            gas_u, flow = (io["u"] if flow_mode == 1 else 0.0), None
+            if flow_mode == 2:
+                flow = flow_cached or device_gas_flow(fld, ex["slm"], max(io["p"], 1e-6), io["T"], ex["r_in"] * MM,
+                                                      (io["x0"] * MM, io["y0"] * MM))
+                gas_u = flow
             t2 = time.time()
             res, info = fly_device(fld, io["mz"], io["K0"], int(io["n"]), io["p"], io["T"], int(io["z"]),
                                    (io["x0"] * MM, io["y0"] * MM), io["r"] * MM, io["z0"] * MM, io["z1"] * MM,
-                                   io["E"], io["u"], io["dt"] * 1e-6 or None, io["tmax"] * 1e-3 or None,
+                                   io["E"], gas_u, io["dt"] * 1e-6 or None, io["tmax"] * 1e-3 or None,
                                    record=min(int(io["n"]), 40),
-                                   progress=lambda f: progress(0.3 + 0.7 * f))
+                                   progress=lambda f: progress(0.3 + 0.7 * f),
+                                   current=ex["I"] * 1e-9, sc_iterations=int(ex["it"]))
             return dict(grid=g, field=fld, res=res, info=info, built=dg is None, t_build=t1 - t0, t_solve=t2 - t1,
-                        t_fly=time.time() - t2, io=io, key=key)
+                        t_fly=time.time() - t2, io=io, key=key, flow=flow, flow_key=flow_key, ex=ex)
 
         self.start(job, self._show, "Solving fields and flying ions…" if dg is None else "Re-solving voltages and flying ions…")
 
@@ -541,7 +594,23 @@ class DeviceTab(SimTab):
             self.log(f"Grid {g.nodes / 1e6:.2f} M nodes (spacing {g.h / MM:.4g} mm) built in {out['t_build']:.1f} s")
             for w in g.warnings:
                 self.log("  Check: " + w)
-        self.log(f"Fields: {len(fld.parts)} parts ({', '.join(fld.parts)}) solved in {out['t_solve']:.1f} s")
+        self.log(f"Fields: {len(fld.parts)} parts ({', '.join(fld.parts)}) solved in {out['t_solve']:.1f} s"
+                 + ("" if fld.insulator is None else f"; insulators (εr > 1) on {fld.insulator.mean():.0%} of the grid"))
+        ex = out["ex"]
+        if out["flow"] is not None:
+            f = out["flow"]
+            self._flow = (out["flow_key"], f)
+            self.log(f"Gas flow: {ex['slm']:g} slm enters a {2 * ex['r_in']:g} mm disc at {f.inlet_speed:.3g} m/s mean; "
+                     f"{f.exit_fraction:.1%} leaves through the far end, the rest through the sides")
+            if f.warning(out["io"]["T"]):
+                self.log("  Note: " + f.warning(out["io"]["T"]))
+            self._draw_flow(f, out)
+        if res.sc_history:
+            hst = res.sc_history
+            self.log(f"Space charge at {ex['I']:g} nA: peak potential " + " → ".join(f"{p:.3g}" for _, p, _ in hst)
+                     + f" V over {len(hst)} solves, {hst[-1][2] / 1.602e-19:.3g} charges in the device"
+                     + ("" if res.sc_converged else "  (NOT settled: raise the iterations, or the current is more "
+                                                    "than this device carries and ions pile up)"))
         st = res.status
         tr = st == 1
         io = out["io"]
@@ -555,7 +624,7 @@ class DeviceTab(SimTab):
         self.log(msg)
         self.last_table = (["status(1=out,2=lost,0=flying)", "x_mm", "y_mm", "z_mm", "t_ms"],
                            [[int(s), *(p / MM), t * 1e3] for s, p, t in zip(st, res.final_pos, res.t_end)])
-        self._draw_potential(fld)
+        self._draw_potential(fld, res.space_charge)
         self._draw_traj(fld, res, info)
         self._draw_results(res, info)
 
@@ -564,7 +633,8 @@ class DeviceTab(SimTab):
         if self.dev is None:
             return
         sm = self.view.paint({e.name: e.dc for e in self.dev.electrodes}, self.selected,
-                             rf={e.name for e in self.dev.electrodes if e.rf})
+                             rf={e.name for e in self.dev.electrodes if e.rf and not e.eps},
+                             insulators={e.name for e in self.dev.electrodes if e.eps > 0})
         if getattr(self, "_cbar", None) is not None:
             self._cbar.update_normal(sm)
         self.plots.draw("Geometry")
@@ -622,23 +692,28 @@ class DeviceTab(SimTab):
                       "boards": ("z (mm, along the ion path)", "x (mm, across)", f"board face; boards {dev.board_gap / MM:g} mm apart")}
             xl, yl, tt = labels[dev.kind]
             ax.set_xlabel(xl); ax.set_ylabel(yl)
-            ax.set_title(tt + ".  Colour: DC, hatched: RF, numbers: TWAVE phase", fontsize=9)
+            ax.set_title(tt + ".  Colour: DC, hatched: RF, numbers: TWAVE phase, tan: insulator", fontsize=9)
             if dev.kind == "axisym":
                 ax.axhline(0, color="k", lw=0.6, ls="-.")
         sm = self.view.paint({e.name: e.dc for e in dev.electrodes}, self.selected,
-                             rf={e.name for e in dev.electrodes if e.rf})
+                             rf={e.name for e in dev.electrodes if e.rf and not e.eps},
+                             insulators={e.name for e in dev.electrodes if e.eps > 0})
         self._cbar = fig.colorbar(sm, ax=ax, label="DC voltage (V)")
         self.plots.draw("Geometry")
 
-    def _draw_potential(self, fld):
+    def _draw_potential(self, fld, sc=None):
         secs = fld.sections(0.0)
+        if sc is not None:                                 # space charge on the first section's plane
+            s0 = secs[0]
+            phi = _device_section(sc.phi, fld)
+            secs.append(dict(s0, phi=phi, title=s0["title"] + ": space-charge potential"))
         fig = self.plots.fig("Potential", show=False)
         axes = np.atleast_1d(fig.subplots(len(secs), 1))
         for ax, s in zip(axes, secs):
             phi = np.ma.masked_where(s["mask"], s["phi"])
             im = ax.imshow(phi, origin="lower", aspect="auto" if s["h"][-1] - s["h"][0] > 3 * (s["v"][-1] - s["v"][0]) else "equal",
                            extent=[s["h"][0], s["h"][-1], s["v"][0], s["v"][-1]], cmap="viridis")
-            ax.contourf(s["h"], s["v"], s["mask"].astype(float), levels=[0.5, 1.5], colors="0.55")
+            _outline(ax, s)
             ax.set_xlabel(s["hl"]); ax.set_ylabel(s["vl"]); ax.set_title(f"Potential at t = 0, {s['title']}", fontsize=9)
             fig.colorbar(im, ax=ax, label="V")
         self.plots.draw("Potential")
@@ -654,7 +729,7 @@ class DeviceTab(SimTab):
         if fld.kind == "planar2d":
             ax1, ax2 = fig.subplots(1, 2, gridspec_kw={"width_ratios": [1, 2]})
             s = secs[0]
-            ax1.contourf(s["h"], s["v"], s["mask"].astype(float), levels=[0.5, 1.5], colors="0.6")
+            _outline(ax1, s)
             for i, c in enumerate(colors):
                 ax1.plot(res.traj[:, i, 0] / MM, res.traj[:, i, 1] / MM, lw=0.5, color=c)
                 ax2.plot(res.traj[:, i, 2] / MM, res.traj[:, i, 0] / MM, lw=0.5, color=c)
@@ -663,7 +738,7 @@ class DeviceTab(SimTab):
         else:
             axes = np.atleast_1d(fig.subplots(len(secs), 1, sharex=True))
             for ax, s, comp in zip(axes, secs, (0, 1)):
-                ax.contourf(s["h"], s["v"], s["mask"].astype(float), levels=[0.5, 1.5], colors="0.6")
+                _outline(ax, s)
                 for i, c in enumerate(colors):
                     tv = np.hypot(res.traj[:, i, 0], res.traj[:, i, 1]) if fld.kind == "axisym" else res.traj[:, i, comp]
                     ax.plot(res.traj[:, i, 2] / MM, tv / MM, lw=0.5, color=c)
@@ -685,6 +760,24 @@ class DeviceTab(SimTab):
         ax2.set_aspect("equal", adjustable="datalim")
         self.plots.draw("Results")
 
+    def _draw_flow(self, flow, out):
+        sec = flow.section((out["io"]["x0"] * MM, out["io"]["y0"] * MM))
+        fig = self.plots.fig("Gas flow", show=False)
+        ax = fig.add_subplot(111)
+        Z, A = sec["z"] / MM, sec["coords"] / MM
+        speed = np.ma.masked_where(sec["mask"], np.hypot(sec["ut"], sec["uz"]))
+        vmax = float(np.percentile(speed.compressed(), 99)) if speed.count() else 1.0
+        im = ax.imshow(speed, origin="lower", aspect="auto", cmap="viridis", extent=[Z[0], Z[-1], A[0], A[-1]], vmax=vmax)
+        fig.colorbar(im, ax=ax, label="gas speed (m/s)", extend="max")
+        ax.streamplot(Z, A, np.where(sec["mask"], 0, sec["uz"]), np.where(sec["mask"], 0, sec["ut"]),
+                      color="w", density=1.2, linewidth=0.6, arrowsize=0.7)
+        ax.contourf(Z, A, sec["mask"].astype(float), levels=[0.5, 1.5], colors="0.55")
+        ax.set_xlim(Z[0], Z[-1]); ax.set_ylim(A[0], A[-1])
+        ax.set_xlabel("z (mm, ion axis)"); ax.set_ylabel("r (mm)" if flow.gmap.kind == "axisym" else "x (mm)")
+        ax.set_title(f"Gas flow, {out['ex']['slm']:g} slm (viscous, pumped through every open side); "
+                     f"{flow.exit_fraction:.1%} leaves through the far end", fontsize=9)
+        self.plots.draw("Gas flow")
+
     # ================= project files =================
     def save_setup(self):
         if self.dev is None:
@@ -699,7 +792,8 @@ class DeviceTab(SimTab):
         d = self.dev.to_dict()
         d["source"] = os.path.relpath(self.dev.source, os.path.dirname(os.path.abspath(path)))
         d["gui"] = {"units": self.units.currentText(), "axis": self.axis.currentText(), "quality": self.quality.currentText(),
-                    "h_mm": self.h.value(), "ions": self.ions.values(), "drive": self.drive.values(), "geo": self.geo.values()}
+                    "h_mm": self.h.value(), "ions": self.ions.values(), "drive": self.drive.values(), "geo": self.geo.values(),
+                    "extra": self.extra.values(), "flow": self.flow.currentIndex()}
         with open(path, "w") as f:
             json.dump(d, f, indent=1)
         self.log(f"Saved setup to {path}")
@@ -723,7 +817,8 @@ class DeviceTab(SimTab):
             return
         gui = d.get("gui", {})
         self._set_combo(self.units, gui.get("units", "mm")); self._set_combo(self.axis, gui.get("axis", "z"))
-        for form, key in ((self.geo, "geo"), (self.drive, "drive"), (self.ions, "ions")):
+        self.flow.setCurrentIndex(int(gui.get("flow", 0)))
+        for form, key in ((self.geo, "geo"), (self.drive, "drive"), (self.ions, "ions"), (self.extra, "extra")):
             form.blockSignals(True)
             for k, v in gui.get(key, {}).items():
                 if k in form.boxes:
@@ -758,3 +853,20 @@ class DeviceTab(SimTab):
         i = combo.findData(value) if data else combo.findText(value)
         if i >= 0:
             combo.setCurrentIndex(i)
+
+
+def _outline(ax, s):
+    """Electrodes grey, insulators in board colour, on a DeviceField section dict."""
+    ax.contourf(s["h"], s["v"], s["mask"].astype(float), levels=[0.5, 1.5], colors="0.55")
+    if s.get("ins") is not None and s["ins"].any():
+        ax.contourf(s["h"], s["v"], (s["ins"] & ~s["mask"]).astype(float), levels=[0.5, 1.5], colors=[INSULATOR])
+
+
+def _device_section(arr, fld):
+    """A node array of the field's grid on the plane of fld.sections()[0]."""
+    if fld.kind == "planar2d":
+        return arr.T
+    if fld.kind == "axisym":
+        return np.concatenate([arr[:0:-1], arr], axis=0)
+    g = fld.dg.g
+    return arr[:, int(np.argmin(np.abs(g.y))), :]

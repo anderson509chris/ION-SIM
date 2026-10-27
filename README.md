@@ -14,7 +14,7 @@ Ion Sim solves electrode fields on a grid, flies thousands of ions through them,
 * **TWAVE traveling-wave ion mobility separation:** stepped electrode boards in 4 Torr gas, with mobility drift and diffusion.
 * **FAIMS:** an asymmetric waveform across a planar gap at 1 atm, field-dependent mobility α(E/N), CV spectra and dispersion plots.
 * **ESI inlet capillary:** spray region, choked capillary flow and free-jet expansion, with ion velocity and kinetic energy from the emitter to the skimmer.
-* **Ion funnel:** the PNNL stacked-ring funnel, a planar two-board funnel, or **your own electrodes imported from STEP, STL or OBJ**, with RF + DC fields and ion flight through 1–10 Torr gas.
+* **Ion funnel:** the PNNL stacked-ring funnel (copper rings on FR4 PCBs), a planar two-board funnel, or **your own electrodes imported from STEP, STL or OBJ**, with RF + DC fields and ion flight through 1–10 Torr gas. PCB dielectric, a computed **gas flow field** and the beam's **space charge** are included.
 * **Device builder:** load a **DXF** drawing or a **STEP / STL / OBJ** model, click each electrode to see and set its DC, RF and TWAVE phase (colored by voltage), apply a DC gradient or an 8-phase TWAVE pattern across many pads at once, then solve and fly ions. Works for flat boards (TWAVE), ring stacks drawn as a profile, rod sets, and full 3D parts.
 
 ---
@@ -98,17 +98,25 @@ Spray region (emitter distance, tip radius, spray voltage, where ions leave the 
 
 ### Ion funnel
 
-Pick the funnel type at the top: **Ring funnel** (stacked PCBs), **Planar funnel** (two boards), or **Imported CAD**. Then set the electrics (RF amplitude and frequency, DC gradient, exit plate), gas (pressure, temperature, axial gas speed) and ions (m/z, charge, K0, start radius). It runs either trajectories for one m/z or transmission against m/z. Plot tabs: Geometry, Potential (DC and RF effective potential), Trajectories, Transmission and Exit beam. While the geometry stays the same, the solver is kept, so changing only voltages re-runs in about a second.
+Pick the funnel type at the top: **Ring funnel** (stacked PCBs), **Planar funnel** (two boards), or **Imported CAD**. Then set the electrics (RF amplitude and frequency, DC gradient, exit plate), gas and ions (m/z, charge, K0, start radius). It runs either trajectories for one m/z or transmission against m/z. Plot tabs: Geometry, Potential (DC, RF effective potential and space charge), Trajectories, Transmission, Exit beam and Gas flow. While the geometry stays the same, the solver is kept, so changing only voltages re-runs in about a second.
 
-| Ring funnel trajectories | DC and RF effective potential |
+* **PCB dielectric.** Ring funnel: each ring is a copper ring around the bore (**Copper ring width**, plated through both faces) on an FR4 board out to the plate diameter (**Board εr**, 4.4 for FR4). Set the width to 0 for all-metal plates. Planar funnel: the strips sit on **Board thickness** of FR4 (0 for strips in free space). Imported CAD: type a permittivity in a body's **Insulator εr** column to make it a board or spacer instead of an electrode. Insulators are drawn in tan, shape the field and stop ions, but carry no voltage.
+* **Gas flow.** *Still gas*, *Uniform axial speed*, or *Flow field from gas throughput*. The flow field takes the throughput in slm and an inlet disc on the entrance face (radius 0 = the entrance bore). It solves viscous flow through the open space, pumped out through every open side, and shows it on the **Gas flow** tab. In the ring funnel almost all the gas leaves between the rings, and about 0.2% reaches the exit.
+* **Space charge.** Give the **Ion current** in nA (0 = off). The ions are flown several times. Each flight's charge (the current times the time spent near each grid node) sets the space-charge field for the next flight. The log shows the space-charge potential at each step and says if it hasn't settled, which usually means more current than the funnel can carry.
+
+| Ring funnel trajectories (PCB rings, gas flow, 1 nA) | DC, RF effective and space-charge potential |
 |---|---|
 | ![Funnel trajectories](docs/screenshots/funnel_trajectories.png) | ![Funnel potential](docs/screenshots/funnel_potential.png) |
+
+| Gas flow through the ring funnel |
+|---|
+| ![Funnel gas flow](docs/screenshots/funnel_gas_flow.png) |
 
 **Importing your own funnel (STEP, STL or OBJ):**
 
 1. Choose **Imported CAD** and press **Load STEP / STL / OBJ...**. Every solid body in the file becomes one electrode, named from the file.
 2. Say which CAD axis the ions travel along (they enter at its low end). For STL/OBJ, also give the units, because those formats don't store them.
-3. The table fills with a standard funnel pattern: bodies sorted along the axis, RF alternating 0°/180°, and a DC ladder from the Electrics box. Tick **Last body is a DC exit plate** if it is. Then edit any DC, RF amplitude or phase by hand. Guards, lenses and grounded parts are just rows with RF set to 0.
+3. The table fills with a standard funnel pattern: bodies sorted along the axis, RF alternating 0°/180°, and a DC ladder from the Electrics box. Tick **Last body is a DC exit plate** if it is. Then edit any DC, RF amplitude or phase by hand. Guards, lenses and grounded parts are just rows with RF set to 0. Boards and spacers get a number in **Insulator εr** (press Auto-assign again afterwards so the pattern skips them).
 4. Check the **Geometry** tab (true cross-sections through the start point), set the start point and detector plane, and pick a grid spacing about a third of your smallest electrode gap. The label shows the grid size, and the limit is 40 M nodes.
 
 `examples/geometry/ring_funnel_30.step` is a ready-made 30-ring funnel to try.
@@ -122,11 +130,12 @@ Pick the funnel type at the top: **Ring funnel** (stacked PCBs), **Planar funnel
 The general tab for your own electrodes. Work down the left panel:
 
 1. **Geometry.** Press **Open DXF / STEP / STL…** and pick the file. Under **Read as**, choose *PCB boards* (pads drawn as seen from above, painted on two facing boards a set gap apart, ions travel along the drawing's x), *Axisymmetric half profile* (a half cross-section of rings or lenses: drawing x is the axis, y the radius), *2D cross-section* (rods or plates extruded a set length), or *3D solids* for STEP/STL/OBJ. Units come from the DXF header when it has them.
-2. **Electrodes.** Every closed shape becomes an electrode, named by its layer and position (or by a TEXT label inside it). Click a shape on the **Geometry** plot, or a row in the table, to see and edit its DC, RF and TWAVE phase. Ctrl- or Shift-click selects several. Colors show the DC voltage, and RF electrodes are hatched. You can pick a whole layer at once.
+2. **Electrodes.** Every closed shape becomes an electrode, named by its layer and position (or by a TEXT label inside it). Click a shape on the **Geometry** plot, or a row in the table, to see and edit its DC, RF and TWAVE phase. Ctrl- or Shift-click selects several. Colors show the DC voltage, and RF electrodes are hatched. You can pick a whole layer at once. A number in **Insulator εr** makes a part an insulator (PCB, spacer). For PCB boards, **PCB substrate behind pads** adds an FR4 board of that thickness behind the pads, with a ground plane on its back.
 3. **Patterns** for the selected electrodes: **Fixed** (same voltages), **DC gradient** (start and end voltage along the ion axis, with optional RF alternating 0°/180° pad to pad), **TWAVE phases** (pads numbered 1..N along the axis, pads side by side share a phase, pitch measured from the drawing), **Ground**, **Remove from TWAVE**.
 4. **Electrics:** RF frequency, and the TWAVE amplitude, speed, number of phases (8 by default) and how many are on. The step time is shown.
 5. **Grid:** **Quick** (seconds, for setting up) or **Detailed** (finer, for final numbers), or a custom spacing. **Check geometry on this grid** reports overlapping electrodes, electrodes closer than the grid spacing, parts too thin for the grid, and parts touching the grid edge.
 6. **Ions and gas**, then **Solve and fly**. Changing only voltages re-uses the grid and warm-starts the solve.
+7. **Gas flow and space charge:** the same flow field (axisymmetric and 3D devices) and space-charge iteration as the funnel tab.
 
 **Save setup…** writes a `.ionsim` file (the drawing path plus every voltage and setting). `examples/geometry/` has three ready setups: `twave_board.ionsim` (48 pads, 8-phase TWAVE with RF guards), `ring_funnel_profile.ionsim` (a 20-ring funnel drawn as a DXF profile) and `quad_rods.ionsim` (quadrupole rods). `examples/geometry/make_dxf_examples.py` shows how the DXFs are drawn.
 
@@ -153,7 +162,7 @@ python examples/quad_demo.py       # ~1 min, writes PNGs 1-4 to out/
 python examples/twave_demo.py      # a few min, writes PNGs 5-8 to out/
 python examples/faims_demo.py      # ~40 s, writes PNGs 9-11 to out/
 python examples/inlet_demo.py      # seconds, writes PNGs 12-14 to out/
-python examples/funnel_demo.py     # ~2 min, writes PNGs 15-18 to out/ and the example STEP file
+python examples/funnel_demo.py     # ~6 min, writes PNGs 15-20 to out/
 ```
 
 ### Quadrupole mass filter
@@ -197,9 +206,11 @@ python examples/funnel_demo.py     # ~2 min, writes PNGs 15-18 to out/ and the e
 | | |
 |---|---|
 | ![Ring funnel](out/15_funnel_trajectories.png) | ![Funnel transmission](out/16_funnel_transmission.png) |
-| **Ring funnel.** 100 rings tapering from 25.4 to 2.5 mm, 100 Vpp at 1 MHz, 20 V/cm, 2 Torr. Ions entering across 16 mm leave in a 0.23 mm (rms) beam, 1.3 ms later. | **Transmission against m/z.** Low RF (30 Vpp) loses heavy ions onto the tapering rings (weak confinement). High RF (300 Vpp) traps mid-mass ions on axis at the small last rings, where the RF makes an axial barrier. At 100 Vpp everything from m/z 35 to 5000 gets through. |
+| **Ring funnel.** 100 PCB rings (2 mm copper on FR4) tapering from 25.4 to 2.5 mm, 100 Vpp at 1 MHz, 20 V/cm, 2 Torr. Ions entering across 16 mm leave in a 0.24 mm (rms) beam, 1.3 ms later. | **Transmission against m/z.** Low RF (30 Vpp) loses heavy ions onto the tapering rings (weak confinement). High RF (300 Vpp) traps mid-mass ions on axis at the small last rings, where the RF makes an axial barrier. At 100 Vpp everything from m/z 35 to 5000 gets through. |
 | ![Planar funnel](out/17_funnel_planar.png) | ![CAD check](out/18_funnel_cad_check.png) |
-| **Planar funnel.** Two boards 4 mm apart, RF strips shortening from 20 to 2 mm, +3 V DC guards beyond the strip ends. Top: the board face (x); bottom: across the gap (y). | **CAD import check.** A 30-ring funnel written to STEP, imported and solved in 3D, against the exact axisymmetric solve of the same rings: same fields, same transmission. |
+| **Planar funnel.** Two FR4 boards 4 mm apart, RF strips shortening from 20 to 2 mm, +3 V DC guards beyond the strip ends. Top: the board face (x); bottom: across the gap (y). | **CAD import check.** A 30-ring funnel written to STEP, imported and solved in 3D, against the exact axisymmetric solve of the same rings: same fields, same transmission. |
+| ![Gas flow](out/19_funnel_gas_flow.png) | ![Space charge](out/20_funnel_space_charge.png) |
+| **Gas flow.** 2 slm into the 25.4 mm entrance at 2 Torr. The gas spreads out of the bore and is pumped away between the PCB rings. About 4–5 m/s remains on axis, rising to ~10 m/s near the exit, and 0.2% of the gas gets through. m/z 500 transit drops from 1.33 to 1.25 ms. | **Space charge.** m/z 500 against beam current. Up to 3 nA everything gets through and the beam just gets wider (0.27 → 0.45 mm rms). At 10 nA the 4 V space-charge potential costs 12% of the ions. At 30 nA the charge piles up at the exit, where the RF makes a small axial barrier, and the beam chokes. |
 
 ---
 
@@ -242,7 +253,10 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 
 ### Ion funnel (`ionsim/funnel.py`)
 
-* **Geometry:** `RingFunnel` (stacked rings, constant ID first and then a linear taper, with an exit plate), `PlanarFunnel` (two boards of strips across the ion path, DC guards beyond the strip ends, an exit slit), or `CadFunnel` (any bodies from `ionsim/cad.py`).
+* **Geometry:** `RingFunnel` (stacked PCB rings, constant ID first and then a linear taper, with an exit plate), `PlanarFunnel` (two FR4 boards of strips across the ion path, DC guards beyond the strip ends, an exit slit), or `CadFunnel` (any bodies from `ionsim/cad.py`, some of them insulators).
+* **Dielectrics (`ionsim/laplace.py`, `ionsim/gridtools.py`):** each grid node carries a relative permittivity, and every link weight is scaled by the harmonic mean of its two ends (the series capacitance of two half cells). The same matrix then solves ∇·(ε∇φ) = −ρ. Links into an electrode take the permittivity of the free side. Insulator nodes aren't fixed in the solve, but ions that reach them stop.
+* **Gas flow (`ionsim/gasflow.py`):** viscous, incompressible flow in the lubrication (local Poiseuille) approximation: u = −(k/μ)∇p with ∇·(k∇p) = 0 and k = c·δ(2L − δ). Here δ is the distance to the nearest wall and L the local channel half-width, found by following δ uphill to the channel's centre ridge. With c = ½ in slits and ¼ in round bores, that is the exact Poiseuille profile and conductance for straight channels, so a funnel's narrow ring gaps pass far less gas than their area suggests. Gas enters through a disc on the entrance face, every other open side is pumped, and the result is scaled to the throughput (μ drops out). Ions read u at their mid-step position.
+* **Space charge (`ionsim/spacecharge.py`):** a steady beam of current I is represented by the N flown ions, each standing for I/N. The charge near each node is I/N times the total time ions spend there, deposited cloud-in-cell during the flight. Poisson is solved for it with every electrode at 0 V (same matrix and factorization as the applied field), its field is added to the applied field, and the ions are flown again. Four passes with 0.4 under-relaxation settle well-behaved beams. The run reports when the potential hasn't settled.
 * **Electrics:** each electrode gets a DC voltage, an RF amplitude and an RF phase. Laplace is linear, so three solves (DC, cos and sin parts, `ionsim/laplace.py`) give the field at any time for any number of electrodes. Alternating 0°/180° RF needs only two.
 * **Fields:** rings are solved on an axisymmetric r–z grid (`ionsim/axisym.py`, finite volumes with face-radius weights, exact symmetry). Everything else uses a 3D voxel grid (`ionsim/grid3d.py`). 2D grids are solved by direct sparse LU: the factorization is kept, so a re-solve takes well under a second. 3D grids use algebraic multigrid (PyAMG) at a relative tolerance of 1e-7, warm-started from the previous solution when only voltages change: 1 M nodes take about 1–2 s, 8 M about 10 s. The entrance face is open (zero normal field), as if an inlet sat in front, rather than a grounded wall.
 * **CAD import (`ionsim/cad.py`):** STEP/IGES/BREP are read with gmsh (OpenCASCADE) and meshed. STL/OBJ/PLY are read with trimesh, plus a small OBJ reader that keeps named objects. Meshes are voxelised by ray parity along z (fills closed solids, holes included). A surface shell sampled at h/2 is added only where a part is too thin to fill, so 35 µm PCB copper still becomes electrode.
@@ -275,9 +289,10 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 | Ring funnel (`examples/funnel_demo.py`) | Planar funnel |
 |---|---|
 | 100 rings, 1 mm pitch, 0.5 mm thick, 45 mm plates | 60 strips per board, 1 mm pitch, 0.5 mm wide |
+| 2 mm copper ring around the bore on FR4 (εr 4.4) | strips on 1.6 mm FR4 (εr 4.4) |
 | ID 25.4 mm (10 rings) tapering to 2.5 mm, 2.5 mm exit orifice | boards 4 mm apart, strips 20 → 2 mm, 2 × 3 mm exit slit |
 | 100 Vpp at 1 MHz, 20 V/cm, last ring 20 V, exit plate 15 V | same electrics, guards +3 V above the local strip DC |
-| 2 Torr N₂, 300 K, m/z 500 with K0 = 1.0 cm²/Vs, grid 0.05 mm | grid 0.2 mm (1.2 M nodes) |
+| 2 Torr N₂, 300 K, m/z 500 with K0 = 1.0 cm²/Vs, grid 0.05 mm | grid 0.2 mm (1.95 M nodes) |
 
 ---
 
@@ -306,6 +321,10 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * 3D solver and voxeliser vs concentric spheres: potential error 1.1% at a 0.25 mm grid and 0.5% at 0.125 mm (first order, as expected for voxels), and the voxelised sphere volume is within 1%.
 * STEP import end to end: a 30-ring funnel written to STEP, imported, voxelised and solved in 3D matches the exact axisymmetric solve. The DC field agrees within 0.4% mid-funnel and within 2% at the ends (where the 3D box and the cylinder enclosure differ), and the RF field converges with grid spacing (16–17% → 7–9% rms going from 0.2 to 0.1 mm). Transmission at m/z 50–2000 is identical (100%), and transit times agree within 7%.
 * Solver speed: the 30-ring STEP funnel at a 0.2 mm grid went from 19.5 s to 2.9 s with the 1e-7 tolerance, and a warm-started re-solve after a voltage change takes 1.5 s, with no visible change in the fields.
+* Dielectric: a slab of εr 4 between parallel plates gives exactly the series-capacitor potential (to 1e-4 V of 100 V).
+* Space charge: a uniformly charged beam in a grounded tube gives the analytic axis potential ρa²/4ε₀·(1 + 2 ln R/a) within 0.6%, on both the axisymmetric and the 3D grid.
+* Gas flow: a pipe gives the Poiseuille profile 2(1 − r²/R²)·ū within ~3%. Earlier, an inviscid (potential flow) version sent 99.99999% of the gas out between the rings, because it ignores how much viscosity holds back flow through narrow gaps. That's why the lubrication model is used.
+* PCB rings vs all-metal plates (100 Vpp, m/z 500): both transmit 100%, and transit is 1.33 vs 1.29 ms. The FR4 between the copper rings slightly weakens the axial DC field.
 * Physics: with 140 Vpp and a 2.0 mm final ID, m/z 500 ions stall on axis between the last two rings. The pseudopotential calculation shows a 1.1 V axial barrier there against a 1.5 V/mm push. That's the known small-ID trapping at funnel exits, and the reason the defaults use 2.5 mm and 100 Vpp.
 
 **Device builder**
@@ -334,8 +353,9 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * The mobility model is extrapolated into the very low-density jet. Treat jet energies as estimates, best for comparing ions and settings.
 
 **Ion funnel and device builder, not modelled yet**
-* Gas flow is a uniform axial speed, not a computed flow field (no jet from the inlet, no jet disrupter). Planned: a shared gas-velocity field that ions read anywhere, filled from a CFD export first and then from a built-in laminar solver.
-* Electrodes sit in vacuum: no PCB dielectric and no surface charging. No space charge. Both are planned (dielectric as a permittivity per material in the solve, space charge as a Poisson term from the ion cloud).
+* Gas flow is viscous and incompressible with no inertia. The jet from an inlet capillary therefore doesn't carry its momentum downstream (there's no jet disrupter effect), and inlet speeds near sound speed (flagged in the log) are rough. A CFD import of the velocity field would cover both.
+* Insulators carry no surface charge (no charging of exposed FR4 by stray ions).
+* Space charge is the steady state of a continuous beam (DC current). Trapped or accumulated ion packets, and very high currents where the beam chokes, are only flagged, not followed in time. Charge is deposited on the field grid, so very thin beams need a fine grid.
 * One RF frequency for the whole device (any phases). The exit region is DC only.
 * 3D voxel fields are first order in the grid spacing, and the grid is capped at 40 M nodes, so very fine features in a large part need a coarser compromise or a cut-down model.
 
@@ -369,6 +389,9 @@ ION-SIM/
 │   ├── grid3d.py           # 3D voxel grid, mesh voxeliser and field
 │   ├── cad.py              # STEP / IGES / STL / OBJ import
 │   ├── gasflight.py        # Langevin ion flight through gas
+│   ├── gasflow.py          # viscous gas flow field on the grid (lubrication model)
+│   ├── spacecharge.py      # beam space charge: Poisson iteration with the flight
+│   ├── gridtools.py        # insulators, grid interpolation, charge deposition
 │   ├── dxf.py              # DXF reader: closed shapes, holes, layers, units
 │   ├── device.py           # device builder: electrodes, patterns, grids, solve, flight
 │   └── gui/                # PySide6 app: one tab per device, shared widgets,

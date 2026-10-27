@@ -6,14 +6,16 @@ is voxelised by ray parity along z (fills closed solids) plus a surface shell sa
 at h/2 (keeps thin parts such as PCB copper, and open surfaces, from slipping between
 nodes). Grid faces are grounded unless listed in `open_faces` (zero normal field):
 "x", "y", "z" for both faces of an axis, or one face such as "z-" (the z-min face).
+Insulators (PCB substrate, spacers) are painted the same way with a relative permittivity.
 """
 import numpy as np
 from .laplace import LaplaceSolver, solve_drives, part_coefficients
+from .gridtools import Media
 
 CHUNK = 4_000_000       # max candidate points per vectorised batch
 
 
-class Grid3D:
+class Grid3D(Media):
     def __init__(self, bounds, h, open_faces=()):
         """bounds = (xmin, xmax, ymin, ymax, zmin, zmax) in metres, h = node spacing."""
         self.h = h
@@ -40,20 +42,35 @@ class Grid3D:
         i1 = max(i0, int(round((a1 - self.axes[ax][0]) / self.h)))
         return slice(max(i0, 0), max(min(i1 + 1, self.shape[ax]), 0))
 
+    def _box(self, x0, x1, y0, y1, z0, z1):
+        return self._range(0, x0, x1), self._range(1, y0, y1), self._range(2, z0, z1)
+
     def add_box(self, name, x0, x1, y0, y1, z0, z1):
         """Axis-aligned box, at least one node thick in every direction."""
-        self.electrode[self._range(0, x0, x1), self._range(1, y0, y1), self._range(2, z0, z1)] = self._id(name)
+        self.electrode[self._box(x0, x1, y0, y1, z0, z1)] = self._id(name)
 
-    def add_mesh(self, name, tris):
-        """Triangles (M,3,3) in metres. Closed solids are filled; any surface is kept."""
-        k = self._id(name)
+    def add_dielectric_box(self, x0, x1, y0, y1, z0, z1, eps_r):
+        """Insulating box (relative permittivity eps_r); electrodes on the same nodes win."""
+        m = np.zeros(self.shape, bool)
+        m[self._box(x0, x1, y0, y1, z0, z1)] = True
+        self.paint_dielectric(m, eps_r)
+
+    def mesh_mask(self, tris):
+        """Nodes of a triangle mesh (M,3,3) in metres: closed solids are filled, any surface is kept."""
         fill = self._fill(tris)
         near = fill.copy()                      # fill grown by one node: the shell only adds
         for ax in range(3):                     # nodes where a part is too thin to be filled
             lo = tuple(slice(0, -1) if a == ax else slice(None) for a in range(3))
             hi = tuple(slice(1, None) if a == ax else slice(None) for a in range(3))
             near[lo] |= fill[hi]; near[hi] |= fill[lo]
-        self.electrode[fill | (self._shell(tris) & ~near)] = k
+        return fill | (self._shell(tris) & ~near)
+
+    def add_mesh(self, name, tris):
+        """Electrode from triangles (M,3,3) in metres."""
+        self.electrode[self.mesh_mask(tris)] = self._id(name)
+
+    def add_dielectric_mesh(self, tris, eps_r):
+        self.paint_dielectric(self.mesh_mask(tris), eps_r)
 
     def _fill(self, tris):
         h, (nx, ny, nz) = self.h, self.shape
@@ -128,7 +145,10 @@ class Grid3D:
             for end, face in ((0, name + "-"), (-1, name + "+")):
                 if name not in self.open_faces and face not in self.open_faces:
                     fixed[tuple(end if a == ax else slice(None) for a in range(3))] = True
-        return LaplaceSolver(fixed, [np.ones(1)] * 3)
+        return LaplaceSolver(fixed, self.link_weights(), eps=self.eps)
+
+    def link_weights(self):
+        return [np.ones(1)] * 3
 
 
 class GridField3D:
@@ -144,6 +164,7 @@ class GridField3D:
         for p in self.parts:
             comps += [-g.astype(np.float32) for g in np.gradient(self.phi[p], grid.h)]
         self.table = np.stack(comps, axis=-1)     # (nx, ny, nz, 3*parts)
+        self.solid = grid.solid                   # electrodes and insulators: ions stop there
 
     def _interp(self, pos):
         g = self.grid
@@ -168,7 +189,7 @@ class GridField3D:
         idx = np.rint((pos - g.origin) / g.h).astype(int)
         out = np.any((idx <= 0) | (idx >= np.array(g.shape) - 1), axis=1)
         idx = np.clip(idx, 0, np.array(g.shape) - 1)
-        return out | (g.electrode[idx[:, 0], idx[:, 1], idx[:, 2]] > 0)
+        return out | self.solid[idx[:, 0], idx[:, 1], idx[:, 2]]
 
     def rf_e2(self, pos):
         v = self._interp(pos)
@@ -184,5 +205,6 @@ class GridField3D:
         out = {}
         for key, sl, coords in (("x", (slice(None), jy), g.x), ("y", (ix, slice(None)), g.y)):
             out[key] = {"coords": coords, "z": g.z, "h": g.h, "mask": g.electrode[sl] > 0, "dc": self.phi["dc"][sl],
+                        "insulator": None if g.insulator is None else g.insulator[sl],
                         "rf": [self.phi[p][sl] for p in self.parts if p != "dc"]}
         return out

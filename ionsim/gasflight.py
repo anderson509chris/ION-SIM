@@ -15,6 +15,9 @@ is stable for any dt/tau, so the
 same code covers RF inertia (tau ~ RF period: funnels at a few Torr) and the
 overdamped mobility limit (tau << dt), where it reduces to dx = K E dt + sqrt(2 D dt) N.
 
+The gas velocity u is either uniform along z or a flow field (gasflow.GasFlow) sampled at
+each ion's mid-step position.
+
 A field object needs efield(t, pos) -> (N,3) V/m and hit(pos) -> (N,) bool.
 """
 import numpy as np
@@ -57,6 +60,9 @@ class FlightResult:
     final_pos: np.ndarray
     traj_t: np.ndarray = None
     traj: np.ndarray = None   # (n_samples, n_record, 3), NaN after an ion stops
+    space_charge: object = None   # spacecharge.SpaceCharge used for this flight, if any
+    sc_history: list = None
+    sc_converged: bool = True
 
     @property
     def transmission(self):
@@ -64,10 +70,13 @@ class FlightResult:
 
 
 def fly(field, ions, dt, t_max, z_end, temp_k=300.0, gas_velocity=0.0, record=0, record_every=10,
-        rng=None, progress=None):
+        rng=None, progress=None, dwell=None, dwell_every=5):
     """Fly GasIons until they pass z = z_end, hit something, or t_max.
-    gas_velocity: uniform gas speed along +z (m/s). record: number of ions whose paths are kept.
-    progress: optional callable(fraction) -> True to stop early."""
+    gas_velocity: uniform gas speed along +z (m/s), or a flow field with velocity(pos) -> (N,3).
+    record: number of ions whose paths are kept.
+    progress: optional callable(fraction) -> True to stop early.
+    dwell: optional accumulator with add(pos, weight); gets the flying ions' positions every
+    dwell_every steps with weight dwell_every * dt (space charge)."""
     rng = rng or np.random.default_rng()
     pos, vel = ions.pos.copy(), ions.vel.copy()
     n = len(pos)
@@ -83,7 +92,8 @@ def fly(field, ions, dt, t_max, z_end, temp_k=300.0, gas_velocity=0.0, record=0,
     sv = np.sqrt(var_v)
     kx1 = np.divide(cov, sv, out=np.zeros(n), where=sv > 0)
     kx2 = np.sqrt(np.maximum(var_x - kx1 ** 2, 0.0))
-    u = np.array([0.0, 0.0, gas_velocity])
+    flow = gas_velocity if hasattr(gas_velocity, "velocity") else None
+    u = np.array([0.0, 0.0, 0.0 if flow else gas_velocity])
 
     status = np.where(ions.t0 > 0, -1, 0).astype(np.int8)
     t_end = np.full(n, np.nan)
@@ -97,7 +107,10 @@ def fly(field, ions, dt, t_max, z_end, temp_k=300.0, gas_velocity=0.0, record=0,
             p, v = pos[s], vel[s]
             # field sampled at the step midpoint (time and predicted position): second order
             # when gas damping is weak (vacuum-like RF devices), unchanged when overdamped
-            atau = (qm[s] * tau[s])[:, None] * field.efield(t + 0.5 * dt, p + (0.5 * dt) * v)
+            mid = p + (0.5 * dt) * v
+            atau = (qm[s] * tau[s])[:, None] * field.efield(t + 0.5 * dt, mid)
+            if flow is not None:
+                u = flow.velocity(mid)
             w = v - u - atau
             x1, x2 = rng.standard_normal((len(s), 3)), rng.standard_normal((len(s), 3))
             pos[s] = p + (u + atau) * dt + w * (tau[s] * one_c[s])[:, None] + kx1[s, None] * x1 + kx2[s, None] * x2
@@ -108,6 +121,8 @@ def fly(field, ions, dt, t_max, z_end, temp_k=300.0, gas_velocity=0.0, record=0,
             status[s[done]] = 1
             t_end[s[hit | done]] = t + dt
         t += dt; step += 1
+        if dwell is not None and step % dwell_every == 0:
+            dwell.add(pos[status == 0], dwell_every * dt)
         if len(rec) and step % record_every == 0:
             snap = pos[rec].copy()
             snap[status[rec] != 0] = np.nan

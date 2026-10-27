@@ -3,6 +3,8 @@ import matplotlib
 from matplotlib.colors import TwoSlopeNorm, Normalize
 from matplotlib.collections import LineCollection
 
+INSULATOR = (0.80, 0.68, 0.40, 1.0)     # PCB / insulator colour in every plot
+
 
 class ElectrodeView:
     """Keeps name -> artists for one figure. Click an electrode to select it (Ctrl / Shift
@@ -33,13 +35,13 @@ class ElectrodeView:
             return Normalize(lo - 1, hi + 1)
         return Normalize(lo, hi)
 
-    def paint(self, values, selected=(), cmap="coolwarm", rf=()):
-        """values: name -> DC volts; rf: names carrying RF (drawn hatched).
-        Returns a ScalarMappable for a colourbar."""
+    def paint(self, values, selected=(), cmap="coolwarm", rf=(), insulators=()):
+        """values: name -> DC volts; rf: names carrying RF (drawn hatched); insulators: names
+        drawn in board colour. Returns a ScalarMappable for a colourbar."""
         cm = matplotlib.colormaps[cmap]
-        norm = self.norm(values)
+        norm = self.norm({k: v for k, v in values.items() if k not in insulators})
         for name, arts in self.artists.items():
-            c = cm(norm(values.get(name, 0.0)))
+            c = INSULATOR if name in insulators else cm(norm(values.get(name, 0.0)))
             sel = name in selected
             for a in arts:
                 if isinstance(a, LineCollection):

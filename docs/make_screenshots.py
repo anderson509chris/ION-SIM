@@ -47,9 +47,12 @@ def go():
     run(w.inlet)
     shot(w.inlet, "Ion energy", "inlet_ion_energy")
     shot(w.inlet, "Gas flow", "inlet_gas_flow")
+    w.funnel.flow.setCurrentIndex(2); w.funnel.space.set("I", 1.0)     # PCB rings, gas flow field, 1 nA beam
     run(w.funnel)
     shot(w.funnel, "Trajectories", "funnel_trajectories")
     shot(w.funnel, "Potential", "funnel_potential")
+    shot(w.funnel, "Gas flow", "funnel_gas_flow")
+    w.funnel.flow.setCurrentIndex(0); w.funnel.space.set("I", 0.0)
     w.funnel.kind.setCurrentIndex(2)
     w.funnel.load_geometry(os.path.join(os.path.dirname(__file__), "..", "examples", "geometry", "ring_funnel_30.step"))
     w.funnel.ions.set("r0", 3.5)

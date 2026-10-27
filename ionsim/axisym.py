@@ -6,12 +6,14 @@ axis), which keeps the matrix symmetric and handles r = 0 without special cases.
 The outer radius and the far z end are grounded; the entrance end (z min) is grounded
 too unless `open_entrance`, where it has zero normal field, as if the space in front
 were filled by more of the first electrode's surroundings (an inlet, not a grounded wall).
+Insulating annuli (PCB board, spacers) carry a relative permittivity.
 """
 import numpy as np
 from .laplace import LaplaceSolver, solve_drives, part_coefficients
+from .gridtools import Media
 
 
-class AxisymGrid:
+class AxisymGrid(Media):
     def __init__(self, r_max, z_min, z_max, h, open_entrance=False):
         self.h, self.open_entrance = h, open_entrance
         self.nr = int(round(r_max / h)) + 1
@@ -30,23 +32,36 @@ class AxisymGrid:
             self.names.append(name)
         return self.names.index(name) + 1
 
-    def add_annulus(self, name, r_in, r_out, z0, z1):
-        """Ring from radius r_in to r_out, z0..z1. Always at least one node thick."""
+    def _annulus(self, r_in, r_out, z0, z1):
         i0 = int(np.ceil(r_in / self.h - 1e-9))
         i1 = max(i0, int(np.floor(r_out / self.h + 1e-9)))
         j0 = int(round((z0 - self.z[0]) / self.h))
         j1 = max(j0, int(round((z1 - self.z[0]) / self.h)))
-        self.electrode[i0:i1 + 1, max(j0, 0):j1 + 1] = self._id(name)
+        return slice(i0, i1 + 1), slice(max(j0, 0), j1 + 1)
 
-    def solver(self):
+    def add_annulus(self, name, r_in, r_out, z0, z1):
+        """Ring from radius r_in to r_out, z0..z1. Always at least one node thick."""
+        self.electrode[self._annulus(r_in, r_out, z0, z1)] = self._id(name)
+
+    def add_dielectric_annulus(self, r_in, r_out, z0, z1, eps_r):
+        """Insulating ring (relative permittivity eps_r). Electrodes painted on the same
+        nodes win, so a copper ring may overlap its board."""
+        m = np.zeros(self.electrode.shape, bool)
+        m[self._annulus(r_in, r_out, z0, z1)] = True
+        self.paint_dielectric(m, eps_r)
+
+    def link_weights(self):
         i = np.arange(self.nr, dtype=float)
         wr = (i[:-1] + 0.5)[:, None]                      # radial links
         wz = np.where(i == 0, 0.125, i)[:, None]           # axial links
+        return [wr, wz]
+
+    def solver(self):
         fixed = self.electrode > 0
         fixed[-1, :] = fixed[:, -1] = True                 # grounded can
         if not self.open_entrance:
             fixed[:, 0] = True
-        return LaplaceSolver(fixed, [wr, wz])
+        return LaplaceSolver(fixed, self.link_weights(), eps=self.eps)
 
 
 class AxisymField:
@@ -64,6 +79,7 @@ class AxisymField:
             comps += [-gr, -gz]
         self.table = np.stack(comps, axis=-1)              # (nr, nz, 2*parts): Er, Ez per part
         self.r_max = grid.r[-1]
+        self.solid = grid.solid                   # electrodes and insulators: ions stop there
 
     def _interp(self, pos):
         g = self.grid
@@ -88,7 +104,7 @@ class AxisymField:
         ir = np.rint(np.hypot(pos[:, 0], pos[:, 1]) / g.h).astype(int)
         jz = np.rint((pos[:, 2] - g.z[0]) / g.h).astype(int)
         out = (ir >= g.nr - 1) | (jz <= 0) | (jz >= g.nz - 1)
-        return out | (g.electrode[np.clip(ir, 0, g.nr - 1), np.clip(jz, 0, g.nz - 1)] > 0)
+        return out | self.solid[np.clip(ir, 0, g.nr - 1), np.clip(jz, 0, g.nz - 1)]
 
     # ---- for plots ----
     def sections(self, center=(0.0, 0.0)):
@@ -96,6 +112,7 @@ class AxisymField:
         g = self.grid
         mirror = lambda a: np.concatenate([a[:0:-1], a], axis=0)
         sec = {"coords": np.concatenate([-g.r[:0:-1], g.r]), "z": g.z, "h": g.h, "mask": mirror(g.electrode > 0),
+               "insulator": None if g.insulator is None else mirror(g.insulator),
                "dc": mirror(self.phi["dc"]), "rf": [mirror(self.phi[p]) for p in self.parts if p != "dc"]}
         return {"x": sec, "y": sec}
 

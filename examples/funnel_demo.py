@@ -1,7 +1,6 @@
 """Prototype 5: ion funnels - stacked rings, planar boards, and imported CAD geometry.
 
-Run:  python examples/funnel_demo.py        (writes PNGs 15-18 to ./out and
-                                             examples/geometry/ring_funnel_30.step, ~3 min)
+Run:  python examples/funnel_demo.py        (writes PNGs 15-20 to ./out, ~6 min)
 """
 import os, sys, time
 import numpy as np
@@ -10,7 +9,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from ionsim.funnel import RingFunnel, PlanarFunnel, CadFunnel, FunnelElectrics, run_funnel
+from ionsim.funnel import RingFunnel, PlanarFunnel, CadFunnel, FunnelElectrics, run_funnel, gas_flow
 from ionsim.cad import write_ring_stack_step, load_bodies
 
 HERE = os.path.dirname(__file__)
@@ -82,7 +81,7 @@ axes[1].set_xlabel("z (mm)")
 fig.tight_layout(); fig.savefig(f"{OUT}/17_funnel_planar.png", dpi=130)
 
 # ---- 4. CAD import check: a ring stack written as STEP, imported, solved in 3D ----
-short = RingFunnel(n_rings=30, id_in=12 * MM, id_out=2.5 * MM, n_straight=4, od=20 * MM)
+short = RingFunnel(n_rings=30, id_in=12 * MM, id_out=2.5 * MM, n_straight=4, od=20 * MM, copper_width=0.0)   # metal rings, as in the STEP file
 step = os.path.join(GEO, "ring_funnel_30.step")
 if not os.path.exists(step):                 # shipped with the repo; only rebuilt if deleted
     write_ring_stack_step(step, short.rings())
@@ -113,4 +112,59 @@ for f_, lab in ((afld, "axisym"), (cfld, "STEP 3D")):
 a1.set_title("30-ring funnel: imported STEP (3D, 0.2 mm grid) vs exact axisymmetric solve\n"
              + "transmission at m/z 50/200/500/2000 and mean transit:  " + ";  ".join(txt), fontsize=8)
 fig.tight_layout(); fig.savefig(f"{OUT}/18_funnel_cad_check.png", dpi=130)
+
+# ---- 5. gas flow field through the ring funnel ----
+SLM = 2.0
+t = time.time(); flow = gas_flow(fld, SLM, P_TORR, inlet_radius=ring.id_in / 2)
+print(f"gas flow: {SLM} slm, solved in {time.time() - t:.1f} s, {flow.exit_fraction:.2%} through the exit")
+res_f, _ = run_funnel(fld, ring.z_start, ring.z_end, 500, 1.0, 300, P_TORR, start_radius=8 * MM, gas_velocity=flow,
+                      record=30, rng=np.random.default_rng(3))
+res_0, _ = run_funnel(fld, ring.z_start, ring.z_end, 500, 1.0, 300, P_TORR, start_radius=8 * MM, rng=np.random.default_rng(3))
+tt = [np.nanmean(r.t_end[r.status == 1]) * 1e3 for r in (res_0, res_f)]
+print(f"  m/z 500: still gas {res_0.transmission:.0%} in {tt[0]:.3f} ms, with flow {res_f.transmission:.0%} in {tt[1]:.3f} ms")
+sec = flow.section()
+fig, (a1, a2) = plt.subplots(2, 1, figsize=(9, 6), sharex=True, gridspec_kw={"height_ratios": [3, 1.3]})
+Z, A = sec["z"] / MM, sec["coords"] / MM
+speed = np.ma.masked_where(sec["mask"], np.hypot(sec["ut"], sec["uz"]))
+im = a1.imshow(speed, origin="lower", aspect="auto", extent=[Z[0], Z[-1], A[0], A[-1]], vmax=np.percentile(speed.compressed(), 99))
+fig.colorbar(im, ax=a1, label="gas speed (m/s)", extend="max")
+a1.streamplot(Z, A, np.where(sec["mask"], 0, sec["uz"]), np.where(sec["mask"], 0, sec["ut"]), color="w", density=1.3, linewidth=0.5, arrowsize=0.6)
+s0 = fld.sections()["x"]
+a1.contourf(Z, A, s0["mask"].astype(float), levels=[0.5, 1.5], colors="tab:orange")
+a1.contourf(Z, A, (s0["insulator"] & ~s0["mask"]).astype(float), levels=[0.5, 1.5], colors=[(0.80, 0.68, 0.40)])
+a1.set_ylabel("x (mm)")
+a1.set_title(f"Gas flow: {SLM} slm into the 25.4 mm entrance at {P_TORR} Torr, viscous, pumped out between the PCB rings; "
+             f"{flow.exit_fraction:.1%} reaches the exit", fontsize=9)
+zz = np.linspace(0, ring.z_end, 400)
+a2.plot(zz / MM, flow.velocity(np.column_stack([0 * zz, 0 * zz, zz]))[:, 2])
+a2.set_ylabel("axial gas speed\non axis (m/s)"); a2.set_xlabel("z (mm)")
+a2.set_title(f"m/z 500 transit: {tt[0]:.2f} ms in still gas, {tt[1]:.2f} ms with the flow", fontsize=9)
+fig.tight_layout(); fig.savefig(f"{OUT}/19_funnel_gas_flow.png", dpi=130)
+
+# ---- 6. space charge: transmission against beam current ----
+currents = [0.3, 1, 3, 10, 30]
+rows = []
+fig, (a1, a2) = plt.subplots(1, 2, figsize=(11, 4))
+for I in currents:
+    t = time.time()
+    r, _ = run_funnel(fld, ring.z_start, ring.z_end, 500, 1.0, 150, P_TORR, start_radius=8 * MM, rng=np.random.default_rng(4),
+                      current=I * 1e-9)
+    trn = r.status == 1
+    rr = np.sqrt(np.mean(np.sum(r.final_pos[trn, :2] ** 2, 1))) / MM if trn.any() else np.nan
+    rows.append((r.transmission, rr, r.sc_history[-1][1], r.sc_converged))
+    a2.plot(r.space_charge.gmap.origin[1] / MM + r.space_charge.gmap.h / MM * np.arange(r.space_charge.phi.shape[1]),
+            r.space_charge.phi[0], "-" if r.sc_converged else ":", label=f"{I:g} nA" + ("" if r.sc_converged else " (piles up)"))
+    print(f"  {I:5g} nA: transmitted {r.transmission:.0%}, exit r_rms {rr:.3f} mm, peak {r.sc_history[-1][1]:.2f} V"
+          f"{'' if r.sc_converged else ' (not settled)'} ({time.time() - t:.0f} s)")
+T = np.array([row[0] for row in rows])
+a1.semilogx(currents, 100 * T, "o-", label="transmitted (%)")
+a1.set_xlabel("ion current (nA)"); a1.set_ylabel("m/z 500 transmitted (%)"); a1.set_ylim(-3, 103)
+ax_r = a1.twinx(); ax_r.semilogx(currents, [row[1] for row in rows], "s--", color="tab:red")
+ax_r.set_ylabel("exit beam r_rms (mm)", color="tab:red")
+a1.set_title("Space charge: the beam's own field against the funnel", fontsize=10)
+settled = [row[2] for row in rows if row[3]]
+a2.set_ylim(0, 1.4 * max(settled))
+a2.set_xlabel("z (mm)"); a2.set_ylabel("space-charge potential on axis (V)"); a2.legend(fontsize=8)
+a2.set_title(f"100 Vpp, {el.gradient:.0f} V/cm, {P_TORR} Torr", fontsize=10)
+fig.tight_layout(); fig.savefig(f"{OUT}/20_funnel_space_charge.png", dpi=130)
 print("plots written to", os.path.abspath(OUT))

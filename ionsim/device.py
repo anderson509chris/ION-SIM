@@ -14,7 +14,9 @@ Flight coordinates: ions travel along +z. planar2d: x, y = drawing x, y. axisym:
 drawing x, r = radius. boards: z = drawing x, x = drawing y, y = normal to the boards.
 
 Every electrode carries   V(t) = dc + rf cos(2 pi f t + phase)  [+ TWAVE amplitude when
-its phase is on]. The field is the sum of a few solved "parts" (dc, cos, sin, one per
+its phase is on]. A part with a relative permittivity (eps > 0) is an insulator instead
+(PCB substrate, spacer): it shapes the field but carries no voltage. Boards can also get
+an FR4 substrate behind the pads (board_thickness, board_eps), grounded on its back face. The field is the sum of a few solved "parts" (dc, cos, sin, one per
 TWAVE phase), each a Laplace solve with those boundary values, so any time is a cheap
 weighted sum and a voltage change re-solves only a few parts: a back-substitution on
 2D grids, a warm-started multigrid solve in 3D.
@@ -25,6 +27,7 @@ import numpy as np
 from .laplace import LaplaceSolver
 from .axisym import AxisymGrid
 from .grid3d import Grid3D
+from .gridtools import GridMap, Media
 
 KINDS = {
     "planar2d": "2D cross-section (extruded along the ion axis)",
@@ -49,9 +52,10 @@ class Electrode:
     phase: float = 0.0          # deg
     tw: int = -1                # TWAVE phase index, -1 = not a TWAVE electrode
     role: str = ""              # which pattern set it (shown in the table)
+    eps: float = 0.0            # > 0: an insulator with this relative permittivity, not an electrode
 
     def settings(self):
-        return {"dc": self.dc, "rf": self.rf, "phase": self.phase, "tw": self.tw, "role": self.role}
+        return {"dc": self.dc, "rf": self.rf, "phase": self.phase, "tw": self.tw, "role": self.role, "eps": self.eps}
 
 
 @dataclass
@@ -78,6 +82,8 @@ class Device:
     both_boards: bool = True        # boards: same pads on the facing board
     length: float = 0.1             # planar2d: length along the ion axis
     open_entrance: bool = True      # the z-min end is open (ions come from upstream)
+    board_thickness: float = 0.0    # boards: substrate behind the pads (0 = none)
+    board_eps: float = 4.4          # boards: substrate relative permittivity (FR4)
 
     # ---------- geometry helpers ----------
     def names(self):
@@ -104,7 +110,7 @@ class Device:
         if self.kind == "axisym":
             r = max(abs(v0), abs(v1))
             return np.array([-r, -r, u0]), np.array([r, r, u1])
-        g = self.board_gap / 2
+        g = self.board_gap / 2 + self.board_thickness
         return np.array([v0, -g, u0]), np.array([v1, g, u1])
 
     # ---------- patterns ----------
@@ -175,7 +181,7 @@ class Device:
             return float(dims.max() * 1.3 / QUALITY[quality]["2d"])
         if self.kind == "boards":
             size = size + np.array([0, 0, 0]) + np.array([2e-3, 0, 2e-3])
-            size[1] = self.board_gap
+            size[1] = self.board_gap + 2 * self.board_thickness
         vol = float(np.prod(np.maximum(size * 1.2, 1e-6)))
         return float((vol / QUALITY[quality]["3d"]) ** (1 / 3))
 
@@ -192,10 +198,11 @@ class Device:
         return {"kind": self.kind, "source": self.source, "units": self.units, "rf_freq": self.rf_freq,
                 "twave": asdict(self.twave), "board_gap": self.board_gap, "both_boards": self.both_boards,
                 "length": self.length, "open_entrance": self.open_entrance,
+                "board_thickness": self.board_thickness, "board_eps": self.board_eps,
                 "electrodes": {e.name: e.settings() for e in self.electrodes}}
 
     def apply_dict(self, d):
-        for k in ("rf_freq", "board_gap", "both_boards", "length", "open_entrance"):
+        for k in ("rf_freq", "board_gap", "both_boards", "length", "open_entrance", "board_thickness", "board_eps"):
             if k in d:
                 setattr(self, k, d[k])
         if "twave" in d:
@@ -222,8 +229,9 @@ def from_bodies(bodies, source="", units="mm"):
 
 
 # ---------------------------------------------------------------------------------
-class DeviceGrid:
-    """Electrodes painted on a grid, with checks. Holds the (reusable) solver."""
+class DeviceGrid(Media):
+    """Electrodes painted on a grid, with checks. Holds the (reusable) solver.
+    Insulators are painted like electrodes, then moved to the permittivity map."""
 
     def __init__(self, dev, h, pad):
         self.dev, self.h, self.kind = dev, h, dev.kind
@@ -244,7 +252,7 @@ class DeviceGrid:
             self._paint2d(Z, R, lambda s, P: s.contains(P) | s.contains(P * [1, -1]), (self.g.z[0], 0.0), swap=True)
         elif self.kind == "boards":
             gap = dev.board_gap / 2
-            ym = gap + 4 * h
+            ym = gap + (dev.board_thickness + 2 * h if dev.board_thickness > 0 else 4 * h)
             self.g = Grid3D((lo[0] - pad, hi[0] + pad, -ym, ym, lo[2] - pad, hi[2] + pad), h,
                             open_faces=("z",) if dev.open_entrance else ("z+",))
             self.g.names = list(names)
@@ -256,6 +264,13 @@ class DeviceGrid:
             masks = [self._mask2d(e.shape, Z, X, (self.g.z[0], self.g.x[0]), swap=True) for e in dev.electrodes]
             for j in jy:
                 self._paint_layer(self.electrode[:, j, :], masks, report=(j == jy[0]))
+            if dev.board_thickness > 0:
+                yb = np.abs(self.g.y)
+                sub = (yb > gap + 0.5 * h) & (yb <= gap + dev.board_thickness + 1e-12)
+                sub &= np.sign(self.g.y) == np.sign(self.g.y[jy[0]]) if len(jy) == 1 else True
+                m = np.zeros(self.electrode.shape, bool)
+                m[:, sub, :] = True
+                self.g.paint_dielectric(m, dev.board_eps)
         else:
             self.g = Grid3D((lo[0] - pad, hi[0] + pad, lo[1] - pad, hi[1] + pad, lo[2] - pad, hi[2] + pad), h,
                             open_faces=("z-",) if dev.open_entrance else ())
@@ -272,8 +287,27 @@ class DeviceGrid:
                 self._check_small(e, int((self.electrode == k).sum()))
         self.nodes = int(self.electrode.size)
         self.names = names
+        self._move_insulators()
         self._edge_check()
         self._solver = None
+
+    def _move_insulators(self):
+        media = getattr(self, "g", self)
+        for k, e in enumerate(self.dev.electrodes, start=1):
+            if e.eps > 0:
+                m = self.electrode == k
+                media.paint_dielectric(m, e.eps)
+                self.electrode[m] = 0
+
+    @property
+    def media(self):
+        """The object holding the permittivity map and solid mask."""
+        return getattr(self, "g", self)
+
+    def gridmap(self):
+        if self.kind == "planar2d":
+            return GridMap("2d", self.h, (self.x[0], self.y[0]), self.electrode.shape, length=self.dev.length)
+        return GridMap.of(self.g)
 
     # painting helpers
     def _mask2d(self, shape, U, V, origin, swap=False):
@@ -367,7 +401,7 @@ class DeviceGrid:
             if self.kind == "planar2d":
                 fixed = self.electrode > 0
                 fixed[0, :] = fixed[-1, :] = fixed[:, 0] = fixed[:, -1] = True
-                self._solver = LaplaceSolver(fixed, [np.ones(1), np.ones(1)])
+                self._solver = LaplaceSolver(fixed, [np.ones(1), np.ones(1)], eps=self.eps)
             else:
                 self._solver = self.g.solver()
         return self._solver
@@ -432,6 +466,8 @@ class DeviceField:
             comps += [-g.astype(np.float32) for g in np.gradient(self.phi[p], h)]
         self.table = np.stack(comps, axis=-1)
         self.dim = 3 if el.ndim == 3 else 2
+        self.solid = dgrid.media.solid
+        self.insulator = dgrid.media.insulator
 
     # ---- time dependence ----
     def coefficients(self, t):
@@ -504,7 +540,7 @@ class DeviceField:
         else:
             out = np.any((gi[:, :2] <= 0) | (gi[:, :2] >= shape[:2] - 1), axis=1) | (gi[:, 2] >= shape[2] - 1)
         gi = np.clip(gi, 0, shape - 1)
-        return out | (self.dg.electrode[tuple(gi.T)] > 0)
+        return out | self.solid[tuple(gi.T)]
 
     def potential(self, t=0.0):
         c = self.coefficients(t)
@@ -513,46 +549,56 @@ class DeviceField:
     def sections(self, t=0.0):
         """Plot sections: list of dicts (title, h, v coords, potential [v, h], mask [v, h], labels)."""
         phi, el = self.potential(t), self.dg.electrode
+        ins = self.insulator if self.insulator is not None else np.zeros(el.shape, bool)
         mm = 1e3
         if self.kind == "planar2d":
             g = self.dg
-            return [dict(title="cross-section", h=g.x * mm, v=g.y * mm, phi=phi.T, mask=el.T > 0,
+            return [dict(title="cross-section", h=g.x * mm, v=g.y * mm, phi=phi.T, mask=el.T > 0, ins=ins.T,
                          hl="x (mm)", vl="y (mm)", ion="point")]
         if self.kind == "axisym":
             g = self.dg.g
             mir = lambda a: np.concatenate([a[:0:-1], a], axis=0)
             r = np.concatenate([-g.r[:0:-1], g.r])
-            return [dict(title="r-z section", h=g.z * mm, v=r * mm, phi=mir(phi), mask=mir(el) > 0,
+            return [dict(title="r-z section", h=g.z * mm, v=r * mm, phi=mir(phi), mask=mir(el) > 0, ins=mir(ins),
                          hl="z (mm, ion axis)", vl="r (mm)", ion="z")]
         g = self.dg.g
         jy = int(np.argmin(np.abs(g.y)))
         out = [dict(title="x-z section, y = 0" + (" (midplane between boards)" if self.kind == "boards" else ""),
-                    h=g.z * mm, v=g.x * mm, phi=phi[:, jy, :], mask=el[:, jy, :] > 0,
+                    h=g.z * mm, v=g.x * mm, phi=phi[:, jy, :], mask=el[:, jy, :] > 0, ins=ins[:, jy, :],
                     hl="z (mm, ion axis)", vl="x (mm)", ion="z")]
         ix = int(np.argmin(np.abs(g.x - 0.5 * (g.x[0] + g.x[-1]))))
-        out.append(dict(title="y-z section", h=g.z * mm, v=g.y * mm, phi=phi[ix], mask=el[ix] > 0,
+        out.append(dict(title="y-z section", h=g.z * mm, v=g.y * mm, phi=phi[ix], mask=el[ix] > 0, ins=ins[ix],
                         hl="z (mm, ion axis)", vl="y (mm)", ion="z"))
         return out
 
 
+def device_gas_flow(fld, slm, pressure_torr, temp_k, inlet_radius, center=(0.0, 0.0)):
+    """Gas flow field (gasflow.GasFlow) through an axisymmetric or 3D device."""
+    from .gasflow import GasFlow, volumetric_flow
+    if fld.kind == "planar2d":
+        raise ValueError("A 2D cross-section has no flow pattern along the axis: use a uniform gas speed")
+    return GasFlow(fld.dg.g, volumetric_flow(slm, pressure_torr, temp_k), inlet_radius, center)
+
+
 def fly_device(fld, mz, K0, n, pressure_torr, temp_k=300.0, charge_state=1, center=(0.0, 0.0),
                radius=0.5e-3, z_start=None, z_end=None, energy_ev=0.0, gas_velocity=0.0, dt=None,
-               t_max=None, record=40, rng=None, progress=None):
+               t_max=None, record=40, rng=None, progress=None, current=0.0, sc_iterations=4):
     """Fly n ions of one m/z through a DeviceField with gas (Langevin) dynamics.
-    Near-vacuum works too: give a tiny pressure and an axial energy."""
+    Near-vacuum works too: give a tiny pressure and an axial energy.
+    gas_velocity: uniform speed along z (m/s) or a GasFlow (device_gas_flow).
+    current: ion beam current (A); non-zero iterates the beam's space charge."""
     from .gasflight import disc_ions, fly
     from .twave import mobility
     from .constants import AMU, E_CHARGE
+    from .spacecharge import fly_with_space_charge
+    rng = rng or np.random.default_rng()
+    u_typ = 0.0 if hasattr(gas_velocity, "velocity") else abs(gas_velocity)   # a flow field mostly leaves sideways
     lo, hi = fld.dev.extent()
     z_start = lo[2] if z_start is None else z_start
     z_end = hi[2] if z_end is None else z_end
     K = mobility(K0, max(pressure_torr, 1e-9), temp_k)
     freq = fld.freq
     has_rf = any(p in fld.parts for p in ("cos", "sin"))
-    ions = disc_ions(n, mz * charge_state, K, charge_state, center, radius, z_start, temp_k,
-                     birth_window=(1 / freq if has_rf else 0.0), rng=rng)
-    if energy_ev > 0:
-        ions.vel[:, 2] += np.sqrt(2 * energy_ev * E_CHARGE * charge_state / (mz * charge_state * AMU))
     if dt is None:
         cands = [1 / (freq * 30)] if has_rf else []
         if np.isfinite(fld.tw.step_time()) and any(p.startswith("tw") for p in fld.parts):
@@ -565,7 +611,7 @@ def fly_device(fld, mz, K0, n, pressure_torr, temp_k=300.0, charge_state=1, cent
         dt = min(cands)
     if t_max is None:
         L = max(z_end - z_start, 1e-6)
-        v = abs(gas_velocity) + (np.sqrt(2 * energy_ev * E_CHARGE / (mz * AMU)) if energy_ev > 0 else 0)
+        v = u_typ + (np.sqrt(2 * energy_ev * E_CHARGE / (mz * AMU)) if energy_ev > 0 else 0)
         if np.isfinite(fld.tw.step_time()) and any(p.startswith("tw") for p in fld.parts):
             v = max(v, 0.05 * fld.tw.speed)
         if pressure_torr > 0.01:
@@ -574,6 +620,19 @@ def fly_device(fld, mz, K0, n, pressure_torr, temp_k=300.0, charge_state=1, cent
     steps = t_max / dt
     if steps > 3e6:
         t_max = 3e6 * dt
-    res = fly(fld, ions, dt, t_max, z_end, temp_k, gas_velocity, record=record,
-              record_every=max(1, int(steps / 400)), rng=rng, progress=progress)
+
+    def fly_once(f, dwell=None, dwell_every=5, prog=progress):
+        ions = disc_ions(n, mz * charge_state, K, charge_state, center, radius, z_start, temp_k,
+                         birth_window=(1 / freq if has_rf else 0.0), rng=rng)
+        if energy_ev > 0:
+            ions.vel[:, 2] += np.sqrt(2 * energy_ev * E_CHARGE * charge_state / (mz * charge_state * AMU))
+        return fly(f, ions, dt, t_max, z_end, temp_k, gas_velocity, record=record,
+                   record_every=max(1, int(steps / 400)), rng=rng, progress=prog, dwell=dwell,
+                   dwell_every=max(1, int(steps / 2000)))
+
+    if current:
+        res, _, _ = fly_with_space_charge(fly_once, fld, fld.dg.gridmap(), fld.dg.solver(), current,
+                                          sc_iterations, progress=progress)
+    else:
+        res = fly_once(fld)
     return res, dict(dt=dt, t_max=t_max, z_start=z_start, z_end=z_end, K=K)
