@@ -41,6 +41,12 @@ def go():
     run(w.twave)
     shot(w.twave, "Arrival times", "twave_arrival_times")
     shot(w.twave, "TW field", "twave_field")
+    run(w.faims)
+    shot(w.faims, "CV spectrum", "faims_cv_spectrum")
+    shot(w.faims, "Alpha", "faims_alpha")
+    run(w.inlet)
+    shot(w.inlet, "Ion energy", "inlet_ion_energy")
+    shot(w.inlet, "Gas flow", "inlet_gas_flow")
     app.quit()
 
 
