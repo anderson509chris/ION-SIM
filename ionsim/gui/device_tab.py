@@ -42,6 +42,8 @@ def examples_dir():
 class DeviceTab(SimTab):
     def __init__(self, parent=None, store=None):
         super().__init__(["Geometry", "Potential", "Trajectories", "Results", "Gas flow", "Heating"], parent)
+        self.plots.hint("Gas flow", "Set Gas flow (section 7) to “Flow field from gas throughput” and press Solve and fly.")
+        self.plots.hint("Heating", "Tick Ion heating (section 8) and press Solve and fly.")
         self.dev = None
         self.grid = None            # (key, DeviceGrid)
         self.field = None           # last DeviceField (warm start)

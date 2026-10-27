@@ -11,6 +11,9 @@ MODES = ["CV scan", "Dispersion plot (theory)"]
 class FaimsTab(SimTab):
     def __init__(self, parent=None):
         super().__init__(["Waveform", "CV spectrum", "Ion paths", "Alpha", "Dispersion"], parent)
+        self.plots.hint("CV spectrum", "Set Run mode to “CV scan” and press Run.")
+        self.plots.hint("Ion paths", "Set Run mode to “CV scan” and press Run.")
+        self.plots.hint("Dispersion", "Set Run mode to “Dispersion plot (theory)” and press Run.")
         self.cell = ParamForm("Planar cell", [
             ("gap", "Gap", 1.88, 0.05, 20, 3, 0.05, "mm"),
             ("length", "Length", 40.0, 1, 500, 1, 5, "mm"),

@@ -23,6 +23,8 @@ BUILTIN = "Built-in RF/DC (set a, q or U, V below)"
 class QuadTab(SimTab):
     def __init__(self, parent=None, store=None):
         super().__init__(["Potential", "Trajectories", "Cross-section", "Stability", "Mass scan", "Excitation"], parent)
+        self.plots.hint("Mass scan", "Set Run mode to “Mass scan” and press Run.\n(With a driver picked under Drive: “Transmission vs m/z”.)")
+        self.plots.hint("Excitation", "Pick a driver with excitation tones under Drive,\nset Run mode to “Transmission vs m/z (excitation scan)” and press Run.")
         self.store = store or get_store()
         self.geom = ParamForm("Rods", [
             ("r0", "Field radius r0", 4.0, 0.5, 50, 3, 0.1, "mm"),

@@ -14,6 +14,9 @@ MODES = ["Separation", "Wave-speed sweep", "Velocity vs theory"]
 class TwaveTab(SimTab):
     def __init__(self, parent=None):
         super().__init__(["TW field", "Arrival times", "Ion velocity", "Speed sweep", "Heating"], parent)
+        self.plots.hint("Arrival times", "Set Run mode to “Separation” and press Run.")
+        self.plots.hint("Speed sweep", "Set Run mode to “Wave-speed sweep” and press Run.")
+        self.plots.hint("Heating", "Set Run mode to “Separation”, tick Ion heating and press Run.")
         self.boards = ParamForm("Boards", [
             ("pitch", "Electrode pitch", 0.508, 0.01, 10, 3, 0.01, "mm"),
             ("width", "Electrode width", 0.432, 0.01, 10, 3, 0.01, "mm"),

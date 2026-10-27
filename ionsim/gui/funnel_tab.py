@@ -34,6 +34,11 @@ def _entrance_bore(bodies, center):
 class FunnelTab(SimTab):
     def __init__(self, parent=None):
         super().__init__(["Geometry", "Potential", "Trajectories", "Transmission", "Exit beam", "Gas flow", "Heating"], parent)
+        self.plots.hint("Trajectories", "Set Run mode to “Trajectories” and press Run.")
+        self.plots.hint("Transmission", "Set Run mode to “Transmission vs m/z” and press Run.")
+        self.plots.hint("Exit beam", "Set Run mode to “Trajectories” and press Run.")
+        self.plots.hint("Gas flow", "Set Gas flow to “Flow field from gas throughput” and press Run.")
+        self.plots.hint("Heating", "Set Run mode to “Trajectories”, tick Ion heating and press Run.")
         self.kind = QtWidgets.QComboBox(); self.kind.addItems(TYPES)
         kind_box = QtWidgets.QGroupBox("Funnel type")
         QtWidgets.QVBoxLayout(kind_box).addWidget(self.kind)

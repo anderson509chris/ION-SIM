@@ -51,6 +51,16 @@ class PlotPanel(QtWidgets.QTabWidget):
             v.addWidget(canvas)
             self.addTab(w, name)
             self.figs[name] = fig
+            self.hint(name, "Press Run to fill this plot.")
+
+    def hint(self, name, text):
+        """Show what fills a plot until a run draws it (a plot is only drawn by the run modes that make it)."""
+        f = self.figs[name]
+        f.clear()
+        ax = f.add_subplot(111); ax.axis("off")
+        ax.text(0.5, 0.5, text, ha="center", va="center", fontsize=11, color="0.35", wrap=True,
+                transform=ax.transAxes)
+        f.canvas.draw_idle()
 
     def fig(self, name, show=True):
         f = self.figs[name]
