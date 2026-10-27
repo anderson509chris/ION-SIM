@@ -105,8 +105,9 @@ class MobilityResult:
 
 
 def fly_mobility(tw, K, z0, z_end, dt, t_max, temp_k=300.0, charge_state=1,
-                 species=None, record_every=0, rng=None):
-    """Overdamped Langevin flight of N ions through a TW. K may be per-ion (N,)."""
+                 species=None, record_every=0, rng=None, progress=None):
+    """Overdamped Langevin flight of N ions through a TW. K may be per-ion (N,).
+    progress: optional callable(fraction) -> True to stop early (used by the GUI)."""
     rng = rng or np.random.default_rng()
     z = np.array(z0, float)
     n = len(z)
@@ -121,6 +122,8 @@ def fly_mobility(tw, K, z0, z_end, dt, t_max, temp_k=300.0, charge_state=1,
         a = np.nonzero(alive)[0]
         z[a] += K[a] * tw.ez(t, z[a]) * dt + sig[a] * rng.standard_normal(len(a))
         t += dt; step += 1
+        if progress and step % 500 == 0 and progress(max(t / t_max, 1 - alive.mean())):
+            break
         done = z[a] >= z_end
         arrival[a[done]] = t
         alive[a[done]] = False

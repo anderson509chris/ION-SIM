@@ -38,7 +38,8 @@ class Simulation:
             a = a + f(t, pos, vel, ions, sel)
         return a
 
-    def run(self, ions, dt, t_max, record_every=0, rng=None):
+    def run(self, ions, dt, t_max, record_every=0, rng=None, progress=None):
+        """progress: optional callable(fraction) -> True to stop early (used by the GUI)."""
         rng = rng or np.random.default_rng()
         pos, vel = ions.pos.copy(), ions.vel.copy()
         n = len(pos)
@@ -61,6 +62,8 @@ class Simulation:
             pos[s] = p + dt/6 * (k1x + 2*k2x + 2*k3x + k4x)
             vel[s] = v + dt/6 * (k1v + 2*k2v + 2*k3v + k4v)
             t += dt; step += 1
+            if progress and step % 200 == 0 and progress(max(t / t_max, np.mean(status > 0))):
+                break
             for h in self.hooks:
                 ions.pos, ions.vel = pos, vel
                 h(t, dt, ions, s, rng)

@@ -3,8 +3,25 @@
 * Prototype 1: quadrupole mass filter (four round rods, RF + DC).
 * Prototype 2: TWAVE traveling-wave (TW) ion mobility separation.
 
+## Desktop app
+
 ```
 pip install -r requirements.txt
+python ion_sim_app.py             # launches the Ion Sim window
+```
+
+Two tabs, Quadrupole mass filter and TWAVE traveling wave. Set the parameters on the left and press Run. Runs happen in the background with a progress bar and a Stop button. Plots can be zoomed and saved, File > Export writes the results as CSV.
+
+**Standalone app (no Python needed to run it):**
+* Windows: double-click `build_windows.bat`, then run `dist\IonSim\IonSim.exe`.
+* macOS / Linux: `./build.sh`, then open `dist/`.
+* GitHub: once pushed, `.github/workflows/build.yml` builds Windows, macOS and Linux versions on every push, which you download from the Actions tab.
+
+PyInstaller can only build for the operating system it runs on, which is why there is one build per OS.
+
+## Scripts
+
+```
 python examples/quad_demo.py      # ~1 min, writes PNGs 1-4 to out/
 python examples/twave_demo.py      # a few min, writes PNGs 5-8 to out/
 ```
