@@ -1,4 +1,4 @@
 numpy
 scipy
 matplotlib
-PySide6
+PySide6!=6.12.0  # 6.12.0 cannot load its macOS platform plugin
