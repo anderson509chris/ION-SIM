@@ -113,20 +113,20 @@ def go():
 
 
 def workspace():
-    """The workspace window: an ion funnel feeding an OA-TOF, both run in turn (Run with the stages before it)."""
+    """The workspace: an ion funnel tab feeding an OA-TOF tab, both run in turn (Run with the stages before it), and Home."""
     from ionsim.gui.workspace import Workspace
     ws = Workspace(models=[("Ion funnel", None), ("OA-TOF", None, "Ion funnel")], persist=False)
     ws.resize(1500, 900); ws.show(); settle()
     m = ws.models[1]
-    ws.tree.setCurrentItem(m.items["Ions"]); settle()
+    ws.tabs.setCurrentWidget(m.ctl); settle()
     ws.run_chain(m); settle(5)
     while ws._chain_now is not None:
         settle(1)
     settle(50)
-    ws.tree.setCurrentItem(m.items["Ions"].child(1)); settle()        # Incoming beam, filled from the funnel
+    m.ctl.scroll.verticalScrollBar().setValue(m.ctl.beam.y() - 6); settle()   # Incoming beam, filled from the funnel
     m.plots.setCurrentIndex(list(m.plots.figs).index("Mass spectrum")); settle()
     ws.grab().save(os.path.join(OUT, "workspace.png")); print("saved workspace")
-    ws.tree.setCurrentItem(ws.add_item); settle()
+    ws.tabs.setCurrentWidget(ws.home); settle()
     ws.grab().save(os.path.join(OUT, "workspace_add_model.png")); print("saved workspace_add_model")
     ws.close()
 

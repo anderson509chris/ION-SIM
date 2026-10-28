@@ -201,9 +201,8 @@ w = MainWindow()
 check("app window", w.tabs.count() >= 8, f"{w.tabs.count()} tabs")
 from ionsim.gui.workspace import Workspace, TEMPLATES
 ws = Workspace(models=[(t, None) for t in TEMPLATES], persist=False)
-groups = sum(len(m.groups) for m in ws.models)
-check("workspace", len(ws.models) == len(TEMPLATES) and all(m.result_items for m in ws.models) and groups > 40,
-      f"{len(ws.models)} models, {groups} setting groups in the tree")
+check("workspace", len(ws.models) == len(TEMPLATES) and ws.tabs.count() == len(TEMPLATES) + 2
+      and ws.tabs.currentWidget() is ws.home, f"{len(ws.models)} model tabs, opens on Home")
 # stages: an OA-TOF model takes its beam and ions from the ions that left a quadrupole model
 from ionsim.stages import ExitIons
 from ionsim.integrator import Result
@@ -224,5 +223,5 @@ ws2 = Workspace(models=[("Quadrupole mass filter", "Q1"), ("OA-TOF", "TOF", "Q1"
 q1, tof = ws2.models
 q1.ctl.set_exit(ex)
 check("stage link", ws2.source_of(tof) is q1 and abs(tof.ctl.beam.values()["e"] - 15.0) < 0.01
-      and "Q1" in tof.root.text(0), tof.root.text(0))
+      and "Q1" in ws2.tabs.tabText(ws2.tabs.indexOf(tof.ctl)), ws2.tabs.tabText(ws2.tabs.indexOf(tof.ctl)))
 print(f"all good in {time.time() - t0:.0f} s")

@@ -65,17 +65,17 @@ PyInstaller can only build for the operating system it runs on, which is why the
 
 ## The desktop app
 
-The app is one workspace: a model tree on the left, and beside it the selected model laid out just like its tab (settings in one scrolling column with **Run**, **Stop** and progress under it, the plot tabs on the right and the results text under the plots).
+The app opens on **Home**, a start page listing every device. Each pick opens a **model** in its own tab, laid out like the classic tabs: settings in one scrolling column with **Run**, **Stop** and progress under it, the plot tabs on the right and the results text under the plots. Several models can be open at once (two funnels, a funnel and a TOF, …); the **Drivers** tab at the end holds the electronics they share.
 
-* **Model tree (left).** *Global definitions > Drivers* holds the electronics shared by every model. Below it, each **model** is one device (quadrupole, TWAVE, FAIMS, ESI inlet, ion funnel, Device builder, OA-TOF) with its settings grouped as **Geometry**, **Electrodes and drive**, **Gas**, **Ions** and **Study**, and its plots under **Results**. Picking a settings node scrolls the settings column to that group; picking a Results node shows that plot. **+ Add model…** (or **File > Add model**) opens a page with every device; several models can sit side by side. Right-click a model to run, rename or remove it. The open models, and which model feeds which, come back the next time the app starts.
-* **Stages.** An OA-TOF model can take its ions from a quadrupole, ion funnel or Device builder model: set **Incoming beam > Ions from** (or right-click the TOF > **Take ions from**). The ions that left the other model in its last trajectory run then set the beam energy and spread, the beam size, the divergence and the ion mixture (scaled so the most abundant species has 2000 ions; with ion heating on, only the share that survives intact counts). **energy added on the way in** is the DC step from that model's last electrode to the pusher. The tree shows the link as *OA-TOF ← Ion funnel*, and **Run > Run with the stages before it** (F6) runs the chain in order.
-* **Run** (F5) runs the selected model, **Stop** (Shift+F5) stops it.
+* **Tabs.** Double-click a model's tab to rename it, close it with its ×, drag tabs to reorder them, and right-click a tab to run, rename or close it. The open models, and which model feeds which, come back the next time the app starts; Home lists them under **Open models**.
+* **Stages.** An OA-TOF model can take its ions from a quadrupole, ion funnel or Device builder model: set **Incoming beam > Ions from** (or right-click the TOF's tab > **Take ions from**). The ions that left the other model in its last trajectory run then set the beam energy and spread, the beam size, the divergence and the ion mixture (scaled so the most abundant species has 2000 ions; with ion heating on, only the share that survives intact counts). **energy added on the way in** is the DC step from that model's last electrode to the pusher. The tab shows the link as *OA-TOF ← Ion funnel*, and **Run > Run with the stages before it** (F6) runs the chain in order.
+* **Run** (F5) runs the model in front, **Stop** (Shift+F5) stops it.
 
 Runs happen in the background. Every plot can be zoomed, panned and saved (**File > Save current plot**), and **File > Export results (CSV)** writes the selected model's numbers out. The earlier one-tab-per-device window is still there: **View > Classic tabs window**, or `python ion_sim_app.py --classic`; there the OA-TOF tab can take its ions from the Quadrupole, Ion funnel or Device builder tab the same way. The sections below describe each device.
 
-| Add a model | OA-TOF fed by an ion funnel, after Run with the stages before it |
+| Home | OA-TOF fed by an ion funnel, after Run with the stages before it |
 |---|---|
-| ![Add a model](docs/screenshots/workspace_add_model.png) | ![Workspace](docs/screenshots/workspace.png) |
+| ![Home](docs/screenshots/workspace_add_model.png) | ![Workspace](docs/screenshots/workspace.png) |
 
 **Ion mixtures.** The quadrupole, TWAVE, ion funnel and device builder tabs take their ions from an **Ions** table: one row per species (name, m/z, charge, K0, number of ions), with **Add** (copies the selected row) and **Remove**. All species fly together in one run. Trajectories are coloured by species (solid: transmitted, dotted: lost, dashed: still flying), arrival-time and exit plots split by species, and the results box and CSV give transmission, transit time and heating for each species. Where a tab needs one reference ion (the quadrupole's a/q operating point and mass scan, the funnel's m/z scan and RF effective-potential map), it uses the first row.
 
@@ -514,7 +514,7 @@ ION-SIM/
 │   ├── heating.py          # effective / internal ion temperature, fragmentation estimate
 │   ├── tof.py              # OA-TOF: pusher pulse, reflectron, exact gap-by-gap flight, resolution
 │   ├── stages.py           # stages: one model's exit ions become the next model's beam
-│   └── gui/                # PySide6 app: workspace.py (model tree beside each device), one controller per device
+│   └── gui/                # PySide6 app: workspace.py (Home, one tab per model), one controller per device
 │                           #   (the *_tab.py files, also the classic tabbed window), shared widgets,
 │                           #   device_tab.py and electrode_view.py (clickable electrodes),
 │                           #   drivers_tab.py, tof_tab.py, heating_view.py, ion_table.py (ion mixtures)
