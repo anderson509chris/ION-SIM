@@ -84,10 +84,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
 def main():
+    """Opens the workspace; `--classic` opens the one-tab-per-device window instead."""
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setStyle("Fusion")
-    w = MainWindow()
+    if "--classic" in sys.argv:
+        w = MainWindow()
+    else:
+        from .workspace import Workspace
+        w = Workspace()
     w.show()
     sys.exit(app.exec())
 

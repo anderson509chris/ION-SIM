@@ -199,4 +199,9 @@ from ionsim.gui.app import MainWindow
 app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
 w = MainWindow()
 check("app window", w.tabs.count() >= 8, f"{w.tabs.count()} tabs")
+from ionsim.gui.workspace import Workspace, TEMPLATES
+ws = Workspace(models=[(t, None) for t in TEMPLATES], persist=False)
+groups = sum(len(m.groups) for m in ws.models)
+check("workspace", len(ws.models) == len(TEMPLATES) and all(m.result_items for m in ws.models) and groups > 40,
+      f"{len(ws.models)} models, {groups} setting groups in the tree")
 print(f"all good in {time.time() - t0:.0f} s")

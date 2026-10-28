@@ -107,7 +107,27 @@ def go():
     t.mode.setCurrentIndex(1); t.scan_param.setCurrentIndex(0); settle()
     run(t)
     shot(t, "Scan", "tof_scan")
+    workspace()
     app.quit()
+
+
+def workspace():
+    """The workspace window: a funnel and an OA-TOF model, the TOF run."""
+    from ionsim.gui.workspace import Workspace
+    ws = Workspace(models=[("Ion funnel", None), ("OA-TOF", None)], persist=False)
+    ws.resize(1500, 900); ws.show(); settle()
+    m = ws.models[1]
+    ws.tree.setCurrentItem(m.items["Electrodes and drive"]); settle()
+    m.ctl.run_btn.click(); settle(5)
+    while m.ctl._thread is not None:
+        settle(1)
+    settle(50)
+    ws.tree.setCurrentItem(m.items["Electrodes and drive"]); settle()
+    m.plots.setCurrentIndex(list(m.plots.figs).index("Mass spectrum")); settle()
+    ws.grab().save(os.path.join(OUT, "workspace.png")); print("saved workspace")
+    ws.tree.setCurrentItem(ws.add_item); settle()
+    ws.grab().save(os.path.join(OUT, "workspace_add_model.png")); print("saved workspace_add_model")
+    ws.close()
 
 
 QtCore.QTimer.singleShot(500, go)

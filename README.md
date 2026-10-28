@@ -6,7 +6,7 @@
 ![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 
-![Ion Sim, quadrupole tab](docs/screenshots/quad_trajectories.png)
+![Ion Sim workspace](docs/screenshots/workspace.png)
 
 Ion Sim solves electrode fields on a grid, flies thousands of ions through them, and checks the results against theory. It currently models six devices, plus a device builder for your own drawings:
 
@@ -42,7 +42,7 @@ cd ION-SIM
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python ion_sim_app.py              # launches the Ion Sim window
+python ion_sim_app.py              # launches the Ion Sim workspace (add --classic for the old tabbed window)
 ```
 
 Requires Python 3.12 or newer. Dependencies: NumPy, SciPy, Matplotlib, PySide6, and for imported geometry PyAMG (3D field solver), ezdxf (DXF), trimesh (STL/OBJ) and gmsh (STEP/IGES).
@@ -65,7 +65,18 @@ PyInstaller can only build for the operating system it runs on, which is why the
 
 ## The desktop app
 
-Set the parameters on the left and press **Run**. Runs happen in the background with a progress bar and a **Stop** button. Every plot can be zoomed, panned and saved, and **File > Export results (CSV)** writes the numbers out.
+The app is one workspace, laid out like COMSOL:
+
+* **Model tree (left).** *Global definitions > Drivers* holds the electronics shared by every model. Below it, each **model** is one device (quadrupole, TWAVE, FAIMS, ESI inlet, ion funnel, Device builder, OA-TOF) with its settings grouped as **Geometry**, **Electrodes and drive**, **Gas**, **Ions** and **Study**, and its plots under **Results**. **+ Add model…** (or **File > Add model**) opens a page with every device; several models can sit side by side. Right-click a model to run, rename or remove it. The open models come back the next time the app starts.
+* **View (centre).** The plot picked under Results. Picking Geometry or Electrodes brings the drawing forward, so electrodes can be clicked there; after a run the plot it made comes to the front and its Results node is selected.
+* **Settings (right).** The settings of the picked node, with that group scrolled into view.
+* **Run bar and results (bottom).** **Run** (F5), **Stop** (Shift+F5), progress, and the selected model's results text.
+
+Runs happen in the background. Every plot can be zoomed, panned and saved (**File > Save current plot**), and **File > Export results (CSV)** writes the selected model's numbers out. The earlier one-tab-per-device window is still there: **View > Classic tabs window**, or `python ion_sim_app.py --classic`. The sections below describe each device; in the workspace each tab's setting groups are the model's tree nodes and its plots are the Results nodes.
+
+| Add a model | OA-TOF model after a run |
+|---|---|
+| ![Add a model](docs/screenshots/workspace_add_model.png) | ![Workspace](docs/screenshots/workspace.png) |
 
 **Ion mixtures.** The quadrupole, TWAVE, ion funnel and device builder tabs take their ions from an **Ions** table: one row per species (name, m/z, charge, K0, number of ions), with **Add** (copies the selected row) and **Remove**. All species fly together in one run. Trajectories are coloured by species (solid: transmitted, dotted: lost, dashed: still flying), arrival-time and exit plots split by species, and the results box and CSV give transmission, transit time and heating for each species. Where a tab needs one reference ion (the quadrupole's a/q operating point and mass scan, the funnel's m/z scan and RF effective-potential map), it uses the first row.
 
@@ -503,7 +514,8 @@ ION-SIM/
 │   ├── drivers.py          # electronics: outputs, RF, TWAVE gates, excitation tones, library
 │   ├── heating.py          # effective / internal ion temperature, fragmentation estimate
 │   ├── tof.py              # OA-TOF: pusher pulse, reflectron, exact gap-by-gap flight, resolution
-│   └── gui/                # PySide6 app: one tab per device, shared widgets,
+│   └── gui/                # PySide6 app: workspace.py (model tree, view, settings), one controller per device
+│                           #   (the *_tab.py files, also the classic tabbed window), shared widgets,
 │                           #   device_tab.py and electrode_view.py (clickable electrodes),
 │                           #   drivers_tab.py, tof_tab.py, heating_view.py, ion_table.py (ion mixtures)
 ├── examples/               # one demo per device; geometry/ has example STEP, DXF and .ionsim setups,
