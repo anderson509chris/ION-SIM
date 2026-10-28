@@ -5,10 +5,12 @@ import numpy as np
 from PySide6 import QtCore, QtWidgets
 
 from ..drivers import Driver, Output, Tone, TEMPLATES
+
+PULSE_SHAPES = {"Linear ramp": "linear", "RC (exponential)": "rc"}
 from .common import ParamForm, PlotPanel
 from .driver_store import get_store
 
-OUT_COLS = ["Output", "DC (V)", "RF 0-pk (V)", "RF phase (°)", "TWAVE phase", "Tones ×"]
+OUT_COLS = ["Output", "DC (V)", "RF 0-pk (V)", "RF phase (°)", "TWAVE phase", "Tones ×", "Pulse (V)"]
 TONE_COLS = ["On", "Frequency (kHz)", "Amplitude 0-pk (V)", "Phase (°)"]
 
 
@@ -30,7 +32,7 @@ class DriversTab(QtWidgets.QWidget):
         split.addWidget(scroll)
 
         # ---- library ----
-        box = QtWidgets.QGroupBox("1. Drivers  (saved automatically, used by the Quadrupole and Device builder tabs)")
+        box = QtWidgets.QGroupBox("1. Drivers  (saved automatically, used by the Quadrupole, OA-TOF and Device builder tabs)")
         g = QtWidgets.QGridLayout(box)
         self.list = QtWidgets.QListWidget(); self.list.setMaximumHeight(130)
         self.list.currentTextChanged.connect(self._select)
@@ -44,7 +46,7 @@ class DriversTab(QtWidgets.QWidget):
         lay.addWidget(box)
 
         # ---- settings ----
-        self.form = ParamForm("2. RF and TWAVE timing", [
+        self.form = ParamForm("2. RF, TWAVE and pulse timing", [
             ("rf", "RF frequency", 1000.0, 1.0, 1e5, 3, 10, "kHz"),
             ("n", "TWAVE phases", 8, 2, 64, 0, 1, ""),
             ("on", "Phases high at once", 4, 1, 63, 0, 1, ""),
@@ -52,14 +54,23 @@ class DriversTab(QtWidgets.QWidget):
             ("speed", "TWAVE speed", 200.0, 0.0, 1e5, 2, 10, "m/s"),
             ("pitch", "at electrode pitch", 0.508, 0.001, 100, 4, 0.01, "mm"),
             ("rise", "Edge rise time", 0.0, 0.0, 1e6, 1, 10, "ns"),
+            ("prate", "Pulse rate", 10.0, 0.001, 1e5, 3, 1, "kHz"),
+            ("pdelay", "Pulse delay", 0.0, 0.0, 1e6, 3, 0.1, "µs"),
+            ("pwidth", "Pulse width", 5.0, 0.0, 1e6, 3, 0.5, "µs"),
+            ("prise", "Pulse rise (10-90 %)", 10.0, 0.0, 1e6, 1, 1, "ns"),
+            ("pfall", "Pulse fall (10-90 %)", 10.0, 0.0, 1e6, 1, 1, "ns"),
         ])
+        self.pshape = QtWidgets.QComboBox(); self.pshape.addItems(list(PULSE_SHAPES))
+        self.pshape.setToolTip("Linear ramp, or the exponential edge of an RC-limited pulser")
+        self.pshape.currentIndexChanged.connect(self._settings_changed)
+        self.form.layout().addRow("Pulse edge shape", self.pshape)
         self.form.changed.connect(self._settings_changed)
         self.timing = QtWidgets.QLabel(); self.timing.setWordWrap(True)
         self.form.layout().addRow(self.timing)
         lay.addWidget(self.form)
 
         # ---- outputs ----
-        box = QtWidgets.QGroupBox("3. Outputs  (TWAVE phase: blank for none; Tones ×: +1, -1 or 0)")
+        box = QtWidgets.QGroupBox("3. Outputs  (TWAVE phase: blank for none; Tones ×: +1, -1 or 0; Pulse: V added while the pulse is high)")
         v = QtWidgets.QVBoxLayout(box)
         self.outs = QtWidgets.QTableWidget(0, len(OUT_COLS)); self.outs.setHorizontalHeaderLabels(OUT_COLS)
         self.outs.verticalHeader().setVisible(False); self.outs.setMinimumHeight(220)
@@ -192,8 +203,11 @@ class DriversTab(QtWidgets.QWidget):
         self._loading = True
         d = self.drv
         for k, val in (("rf", d.rf_freq / 1e3), ("n", d.tw_phases), ("on", d.tw_on), ("amp", d.tw_amp),
-                       ("speed", d.tw_speed), ("pitch", d.tw_pitch * 1e3), ("rise", d.tw_rise * 1e9)):
+                       ("speed", d.tw_speed), ("pitch", d.tw_pitch * 1e3), ("rise", d.tw_rise * 1e9),
+                       ("prate", d.pulse_rate / 1e3), ("pdelay", d.pulse_delay * 1e6), ("pwidth", d.pulse_width * 1e6),
+                       ("prise", d.pulse_rise * 1e9), ("pfall", d.pulse_fall * 1e9)):
             self.form.set(k, val)
+        self.pshape.setCurrentIndex(list(PULSE_SHAPES.values()).index(d.pulse_shape) if d.pulse_shape in PULSE_SHAPES.values() else 0)
         self._fill_outputs(); self._fill_tones()
         self.notes.setPlainText(d.notes)
         self._loading = False
@@ -205,7 +219,7 @@ class DriversTab(QtWidgets.QWidget):
         for o in self.drv.outputs:
             r = self.outs.rowCount(); self.outs.insertRow(r)
             vals = [o.name, f"{o.dc:g}", f"{o.rf:g}", f"{o.rf_phase:g}", str(o.tw + 1) if o.tw >= 0 else "",
-                    f"{o.tone_sign:g}"]
+                    f"{o.tone_sign:g}", f"{o.pulse:g}"]
             for c, val in enumerate(vals):
                 self.outs.setItem(r, c, QtWidgets.QTableWidgetItem(val))
         self.outs.blockSignals(False)
@@ -233,6 +247,9 @@ class DriversTab(QtWidgets.QWidget):
         v, d = self.form.values(), self.drv
         d.rf_freq, d.tw_phases, d.tw_on, d.tw_amp = v["rf"] * 1e3, int(v["n"]), int(v["on"]), v["amp"]
         d.tw_speed, d.tw_pitch, d.tw_rise = v["speed"], v["pitch"] * 1e-3, v["rise"] * 1e-9
+        d.pulse_rate, d.pulse_delay, d.pulse_width = v["prate"] * 1e3, v["pdelay"] * 1e-6, v["pwidth"] * 1e-6
+        d.pulse_rise, d.pulse_fall = v["prise"] * 1e-9, v["pfall"] * 1e-9
+        d.pulse_shape = PULSE_SHAPES[self.pshape.currentText()]
         self._changed()
 
     def _notes_changed(self):
@@ -261,6 +278,7 @@ class DriversTab(QtWidgets.QWidget):
         tw = (cell(4).text() if cell(4) else "").strip()
         o.tw = int(float(tw)) - 1 if tw else -1
         o.tone_sign = self._num(cell(5))
+        o.pulse = self._num(cell(6))
         self.outs.blockSignals(True)
         cell(0).setText(o.name)
         cell(4).setText(str(o.tw + 1) if o.tw >= 0 else "")
@@ -310,11 +328,19 @@ class DriversTab(QtWidgets.QWidget):
         d = self.drv
         if not d:
             return
+        txt = []
         if d.has_twave():
-            self.timing.setText(f"TWAVE step {d.step_time() * 1e6:.3f} µs, wave frequency {d.tw_frequency() / 1e3:.2f} kHz "
-                                f"(speed / pitch). In a device the speed follows from its own pitch.")
+            txt.append(f"TWAVE step {d.step_time() * 1e6:.3f} µs, wave frequency {d.tw_frequency() / 1e3:.2f} kHz "
+                       f"(speed / pitch). In a device the speed follows from its own pitch.")
         else:
-            self.timing.setText("No output carries a TWAVE phase.")
+            txt.append("No output carries a TWAVE phase.")
+        if d.has_pulse():
+            period = 1 / d.pulse_rate if d.pulse_rate > 0 else np.inf
+            txt.append(f"Pulse every {period * 1e6:.1f} µs, {d.pulse_width / period:.1%} duty."
+                       + ("  The pulse is longer than its period." if d.pulse_delay + d.pulse_width > period else ""))
+        else:
+            txt.append("No output is pulsed.")
+        self.timing.setText(" ".join(txt))
 
     def _auto_window(self):
         d = self.drv
@@ -323,6 +349,9 @@ class DriversTab(QtWidgets.QWidget):
             spans.append(d.tw_phases * d.step_time())
         if any(o.tone_sign for o in d.outputs) and d.active_tones():
             spans.append(2 / min(t.freq for t in d.active_tones()))
+        if d.has_pulse():
+            spans.append(min(d.pulse_delay + 1.5 * d.pulse_width + 4 * d.pulse_fall,
+                             1 / d.pulse_rate if d.pulse_rate > 0 else np.inf))
         return max(spans) if spans else 1e-5
 
     def plot(self):

@@ -6,12 +6,15 @@ sequencer and any number of outputs. Each output's voltage is
     V(t) = dc + rf cos(2 pi f_rf t + phase)
               + tone_sign * sum_k A_k cos(2 pi f_k t + phase_k)
               + tw_amp * level_p(t)            (only if the output carries TWAVE phase p)
+              + pulse * gate(t)                (the driver's pulse, e.g. a TOF pusher)
 
 level_p(t) is the TWAVE gate for phase p: n_on of the n_phases outputs are high at a
 time, the pattern steps one phase every step_time = pitch / speed, and each edge ramps
 over rise_time. tone_sign is +1 / -1 / 0 per output, so the same tones can be added
 in phase with the RF (quadrupolar excitation: + on one rod pair, - on the other), across
-one rod pair (dipolar: + on x1, - on x2) or left off.
+one rod pair (dipolar: + on x1, - on x2) or left off. gate(t) is a repeating pulse
+(rate, delay, width, 10-90 % rise and fall, linear or RC edges); each output adds its own
+pulse amplitude, so a pusher and a puller can share one timing.
 
 Because fields add linearly, a device is solved once per distinct component (DC, cos and
 sin of each frequency, each TWAVE phase), not once per output, so 8 tones on a quad or
@@ -41,6 +44,7 @@ class Output:
     rf_phase: float = 0.0      # degrees (0 = RF+, 180 = RF-)
     tw: int = -1               # TWAVE phase carried (0-based), -1 = none
     tone_sign: float = 0.0     # multiplier on the driver's tones: +1, -1 or 0
+    pulse: float = 0.0         # V added while the driver's pulse is high
 
 
 @dataclass
@@ -55,6 +59,12 @@ class Driver:
     tw_speed: float = 200.0    # m/s, at tw_pitch
     tw_pitch: float = 0.508e-3 # electrode pitch the speed refers to (m)
     tw_rise: float = 0.0       # edge ramp time (s)
+    pulse_rate: float = 10e3   # pulses per second
+    pulse_delay: float = 0.0   # s, from the start of each period to the start of the rise
+    pulse_width: float = 5e-6  # s, start of rise to start of fall
+    pulse_rise: float = 10e-9  # s, 10-90 %
+    pulse_fall: float = 10e-9  # s, 10-90 %
+    pulse_shape: str = "linear"  # "linear" or "rc"
     notes: str = ""
 
     # ---- TWAVE ----
@@ -71,6 +81,19 @@ class Driver:
 
     def tw_spec(self):
         return TwSpec(self.name, self.tw_phases, self.tw_on, self.tw_amp, self.step_time(), self.tw_rise)
+
+    # ---- pulse ----
+    def has_pulse(self):
+        return any(o.pulse for o in self.outputs)
+
+    def pulse_spec(self):
+        return PulseSpec(self.name, self.pulse_rate, self.pulse_delay, self.pulse_width, self.pulse_rise,
+                         self.pulse_fall, self.pulse_shape)
+
+    def pulse_of(self, out):
+        """(PulseSpec, amplitude) of one output, or None."""
+        o = self.output(out) if isinstance(out, str) else out
+        return (self.pulse_spec(), o.pulse) if o.pulse else None
 
     # ---- outputs ----
     def output(self, name):
@@ -103,6 +126,9 @@ class Driver:
             v += a * np.cos(2 * np.pi * f * t + np.radians(ph))
         if tw:
             v += tw[0].amp * tw[0].level(tw[1], t)
+        p = self.pulse_of(out)
+        if p:
+            v += p[1] * p[0].level(t)
         return v
 
     def max_freq(self):
@@ -159,6 +185,41 @@ class TwSpec:
         return np.where(tau < n_on, up, down)
 
 
+def edge(s, t10_90, shape="linear"):
+    """Rising edge 0 -> 1, s = time since the edge started; t10_90 = 10-90 % rise time."""
+    s = np.asarray(s, float)
+    if t10_90 <= 0:
+        return (s >= 0).astype(float)
+    if shape == "linear":
+        return np.clip(s / (t10_90 / 0.8), 0.0, 1.0)
+    tau = t10_90 / np.log(9)
+    return np.where(s >= 0, 1.0 - np.exp(-np.maximum(s, 0) / tau), 0.0)
+
+
+def pulse_level(t, delay, rise, width, fall, shape="linear"):
+    """One pulse, 0 -> 1 -> 0: rises from t = delay, falls from delay + width."""
+    s = np.asarray(t, float) - delay
+    return np.clip(edge(s, rise, shape) - edge(s - width, fall, shape), 0.0, 1.0)
+
+
+@dataclass(frozen=True)
+class PulseSpec:
+    """A repeating pulse (hashable, so the field solver can share it between outputs)."""
+    key: str
+    rate: float
+    delay: float
+    width: float
+    rise: float
+    fall: float
+    shape: str = "linear"
+
+    def level(self, t):
+        t = np.asarray(t, float)
+        if self.rate > 0:
+            t = np.mod(t, 1.0 / self.rate)
+        return pulse_level(t, self.delay, self.rise, self.width, self.fall, self.shape)
+
+
 # ---------- templates ----------
 
 def twave_rf_combiner(name="TWAVE/RF combiner"):
@@ -196,11 +257,19 @@ def dc_supply(name="DC supply", n=8):
     return Driver(name, outputs=[Output(f"DC{k + 1}") for k in range(n)], notes=f"{n} DC channels.")
 
 
+def tof_pulser(name="OA-TOF pusher-puller"):
+    """Pusher plate and puller grid pulsed together for an orthogonal-acceleration TOF."""
+    return Driver(name, outputs=[Output("Pusher", pulse=600.0), Output("Puller", pulse=-600.0)],
+                  pulse_rate=10e3, pulse_width=5e-6, pulse_rise=10e-9, pulse_fall=10e-9,
+                  notes="Pusher pulses up and puller pulses down at the same time; DC is the beam potential.")
+
+
 TEMPLATES = {
     "TWAVE/RF combiner (16 outputs)": twave_rf_combiner,
     "Quad RF + 8 tones (on the RF)": quad_excitation,
     "Quad RF + 8 tones (dipolar, x rods)": lambda name="Quad dipolar": quad_excitation(name, dipolar=True),
     "RF pair (RF+ / RF-)": rf_pair,
+    "OA-TOF pusher and puller": tof_pulser,
     "DC supply (8 channels)": dc_supply,
     "Empty": lambda name="New driver": Driver(name, outputs=[Output("Out 1")]),
 }

@@ -205,6 +205,11 @@ class Device:
         tw = (self.tw_spec(), e.tw) if 0 <= e.tw < self.twave.n_phases else None
         return e.dc, sines, tw
 
+    def pulse_of(self, e):
+        """(PulseSpec, amplitude) of an electrode wired to a pulsed driver output, or None."""
+        w = self.driver_of(e)
+        return w[0].pulse_of(w[1]) if w else None
+
     def wire_driver(self, names, drv, mode="one", output=None, start_phase=0, rf_alt="across"):
         """Wire electrodes to a driver. mode "one": all to `output`. mode "twave": TWAVE
         phases in order along the ion axis (electrodes side by side share a phase), each to
@@ -527,6 +532,9 @@ def part_values(dev):
             spec, p = tw
             name = f"tw{p}" if spec.key == "device" else f"tw@{spec.key}#{p}"
             part(name, ("tw", spec, p))[k] = 1.0
+        pu = dev.pulse_of(e)
+        if pu:
+            part(f"pulse@{pu[0].key}", ("pulse", pu[0]))[k] = pu[1]
     out_v, out_m = {}, {}
     for name, v in vals.items():
         v[np.abs(v) < 1e-12] = 0.0
@@ -573,6 +581,8 @@ class DeviceField:
                 out.append(np.cos(2 * np.pi * m[1] * t))
             elif m[0] == "sin":
                 out.append(-np.sin(2 * np.pi * m[1] * t))
+            elif m[0] == "pulse":
+                out.append(float(m[1].level(t)))
             else:
                 spec, k = m[1], m[2]
                 out.append(spec.amp * float(spec.level(k, t)))
@@ -584,6 +594,9 @@ class DeviceField:
 
     def tw_specs(self):
         return list({m[1] for m in self.meta.values() if m[0] == "tw"})
+
+    def pulse_specs(self):
+        return list({m[1] for m in self.meta.values() if m[0] == "pulse"})
 
     def tw_speed(self):
         """Slowest wave speed (m/s) over the TWAVE sequencers in use, at the device pitch."""
@@ -716,6 +729,7 @@ def fly_device(fld, mz, K0, n, pressure_torr, temp_k=300.0, charge_state=1, cent
         cands = [1 / (max(freqs) * 30)] if has_rf else []
         cands += [st / 20 for st in steps_tw]
         cands += [sp.rise / 4 for sp in fld.tw_specs() if sp.rise > 0]
+        cands += [r / 4 for sp in fld.pulse_specs() for r in (sp.rise, sp.fall) if r > 0]
         L = max(z_end - z_start, 1e-6)
         cands.append(L / 2000)
         tau = float(np.min(mz_s * AMU * K_s / E_CHARGE))

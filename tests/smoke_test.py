@@ -135,7 +135,7 @@ check("quad tone ejects its m/z", T[0] > 0.9 and T[1] < 0.2, f"no tone {T[0]:.0%
 from ionsim.gasflight import disc_ions, fly
 from ionsim.heating import HeatingModel
 from ionsim.twave import mobility
-from ionsim.constants import AMU, K_B
+from ionsim.constants import AMU, K_B, E_CHARGE
 
 
 class Uniform:
@@ -161,10 +161,42 @@ t_light, t_heavy = (np.nanmean(res.t_end[(sp == k) & (res.status == 1)]) for k i
 check("ion mixture", list(sp[:4]) == [0, 1, 0, 1] and (sp == 1).sum() == 20 and t_light < t_heavy,
       f"transit {t_light * 1e3:.2f} vs {t_heavy * 1e3:.2f} ms, transmission {res.transmission:.0%}")
 
+# OA-TOF: exact flight time of an ion at rest (instant pulse, ideal grids, linear) ...
+from ionsim import tof as TOF
+from ionsim.ions import IonSpecies
+lin = TOF.OATof(reflectron="none", pulse=TOF.Pulse(rise=0, fall=0), det_jitter=0)
+still = TOF.Beam(sigma_x=0, divergence_deg=0, energy_spread_ev=0)
+r = TOF.fly(lin, still, [IonSpecies("a", 500, 1, 1, 3)], rng=np.random.default_rng(0))
+a1 = E_CHARGE * (lin.v_push - lin.v_pull) / lin.push_gap / (500 * AMU)
+t1 = np.sqrt(lin.push_gap / a1); v1 = a1 * t1                     # starts mid-gap
+a2 = E_CHARGE * (lin.v_pull - lin.v_drift) / lin.accel_gap / (500 * AMU)
+v2 = np.sqrt(v1 ** 2 + 2 * a2 * lin.accel_gap)
+want = t1 + (v2 - v1) / a2 + lin.drift_length / v2
+check("TOF flight time (exact)", abs(r.t[0] / want - 1) < 1e-9, f"{r.t[0] * 1e6:.6f} µs vs {want * 1e6:.6f} µs")
+# ... the best detector distance of a linear TOF is the Wiley-McLaren space focus ...
+spread = TOF.Beam(sigma_x=0.3e-3, divergence_deg=0, energy_spread_ev=0)
+D = TOF.wiley_mclaren_focus(lin, spread)
+Ls = np.linspace(0.6 * D, 1.4 * D, 17)
+R, _ = TOF.scan(lin, spread, [IonSpecies("a", 500, 1, 1, 1500)], "drift_length", Ls)
+check("TOF space focus (Wiley-McLaren)", abs(Ls[np.argmax(R)] / D - 1) < 0.06, f"best {Ls[np.argmax(R)] * 1e3:.1f} mm vs {D * 1e3:.1f} mm")
+# ... and the suggested two-stage reflectron reaches high resolution
+refl, _ = TOF.suggest_reflectron(TOF.OATof(), TOF.Beam())
+Rr = TOF.resolution(refl, TOF.Beam(), [IonSpecies("a", 500, 1, 1, 2000)])
+check("TOF reflectron", Rr > 10000, f"resolution {Rr:.0f}")
+# a pulsed driver output becomes its own field part in the Device builder
+from ionsim.drivers import tof_pulser
+pz = tof_pulser()
+dev = from_drawing(load_dxf(os.path.join(GEO, "ring_funnel_profile.dxf")), "axisym")
+dev.wire_driver([dev.electrodes[0].name], pz, "one", "Pusher")
+parts, meta = part_values(dev)
+lv = pz.pulse_spec().level(np.array([0.0, 1e-6, 1 / pz.pulse_rate + 1e-6]))
+check("driver pulse", any(m[0] == "pulse" for m in meta.values()) and list(lv) == [0.0, 1.0, 1.0],
+      f"parts {list(parts)}")
+
 # the app window builds
 from PySide6 import QtWidgets
 from ionsim.gui.app import MainWindow
 app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
 w = MainWindow()
-check("app window", w.tabs.count() >= 7, f"{w.tabs.count()} tabs")
+check("app window", w.tabs.count() >= 8, f"{w.tabs.count()} tabs")
 print(f"all good in {time.time() - t0:.0f} s")

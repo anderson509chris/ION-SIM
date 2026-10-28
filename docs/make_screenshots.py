@@ -97,6 +97,16 @@ def go():
     d.open_setup_from(os.path.join(geo, "ring_funnel_profile.ionsim"))
     run(d)
     shot(d, "Trajectories", "device_funnel_profile")
+    # OA-TOF: single shot, then a back-plate scan
+    t = w.tof
+    t.mode.setCurrentIndex(0)
+    run(t)
+    shot(t, "Layout", "tof_layout")
+    shot(t, "Mass spectrum", "tof_mass_spectrum")
+    shot(t, "Peak width", "tof_peak_width")
+    t.mode.setCurrentIndex(1); t.scan_param.setCurrentIndex(0); settle()
+    run(t)
+    shot(t, "Scan", "tof_scan")
     app.quit()
 
 

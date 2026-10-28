@@ -1,0 +1,42 @@
+{
+ "drivers": [
+  {
+   "name": "OA-TOF pusher-puller",
+   "rf_freq": 1000000.0,
+   "outputs": [
+    {
+     "name": "Pusher",
+     "dc": 0.0,
+     "rf": 0.0,
+     "rf_phase": 0.0,
+     "tw": -1,
+     "tone_sign": 0.0,
+     "pulse": 600.0
+    },
+    {
+     "name": "Puller",
+     "dc": 0.0,
+     "rf": 0.0,
+     "rf_phase": 0.0,
+     "tw": -1,
+     "tone_sign": 0.0,
+     "pulse": -600.0
+    }
+   ],
+   "tones": [],
+   "tw_phases": 8,
+   "tw_on": 4,
+   "tw_amp": 20.0,
+   "tw_speed": 200.0,
+   "tw_pitch": 0.000508,
+   "tw_rise": 0.0,
+   "pulse_rate": 10000.0,
+   "pulse_delay": 0.0,
+   "pulse_width": 5e-06,
+   "pulse_rise": 1e-08,
+   "pulse_fall": 1e-08,
+   "pulse_shape": "linear",
+   "notes": "Pusher pulses up and puller pulses down at the same time; DC is the beam potential."
+  }
+ ]
+}

@@ -8,15 +8,16 @@
 
 ![Ion Sim, quadrupole tab](docs/screenshots/quad_trajectories.png)
 
-Ion Sim solves electrode fields on a grid, flies thousands of ions through them, and checks the results against theory. It currently models five devices, plus a device builder for your own drawings:
+Ion Sim solves electrode fields on a grid, flies thousands of ions through them, and checks the results against theory. It currently models six devices, plus a device builder for your own drawings:
 
 * **Quadrupole mass filter:** four round rods with RF + DC, a Laplace field solve, RK4 ion flight and a Mathieu stability check.
 * **TWAVE traveling-wave ion mobility separation:** stepped electrode boards in 4 Torr gas, with mobility drift and diffusion.
 * **FAIMS:** an asymmetric waveform across a planar gap at 1 atm, field-dependent mobility α(E/N), CV spectra and dispersion plots.
 * **ESI inlet capillary:** spray region, choked capillary flow and free-jet expansion, with ion velocity and kinetic energy from the emitter to the skimmer.
 * **Ion funnel:** the PNNL stacked-ring funnel (copper rings on FR4 PCBs), a planar two-board funnel, or **your own electrodes imported from STEP, STL or OBJ**, with RF + DC fields and ion flight through 1–10 Torr gas. PCB dielectric, a computed **gas flow field** and the beam's **space charge** are included.
+* **OA-TOF:** an orthogonal-acceleration time-of-flight analyser: the beam in the pusher, the pusher and puller pulse (with real rise times), acceleration, drift, a single- or two-stage reflectron (or linear) and the detector. Arrival times, mass spectra, resolution, what limits the peak width, where ions land on the detector, duty cycle, scans of any setting and an automatic reflectron tune.
 * **Device builder:** load a **DXF** drawing or a **STEP / STL / OBJ** model, click each electrode to see and set its DC, RF and TWAVE phase (colored by voltage), apply a DC gradient or an 8-phase TWAVE pattern across many pads at once, then solve and fly ions. Works for flat boards (TWAVE), ring stacks drawn as a profile, rod sets, and full 3D parts.
-* **Drivers:** build your electronics once (a TWAVE/RF combiner with 16 outputs, a quad RF supply with 8 excitation tones, an RF pair, DC channels) and wire their outputs to electrodes in the Quadrupole and Device builder tabs. Each output can carry DC, RF, a TWAVE phase with real edge rise times, and any number of excitation tones.
+* **Drivers:** build your electronics once (a TWAVE/RF combiner with 16 outputs, a quad RF supply with 8 excitation tones, a TOF pusher and puller, an RF pair, DC channels) and wire their outputs to electrodes in the Quadrupole, OA-TOF and Device builder tabs. Each output can carry DC, RF, a TWAVE phase with real edge rise times, any number of excitation tones, and a pulse.
 * **Ion heating:** every gas-phase flight (funnel, Device builder, TWAVE) tracks each ion's effective and internal temperature, the collision energy, where along the device ions get hottest, and optionally how many survive intact (fragmentation / unfolding estimate).
 
 ---
@@ -48,7 +49,7 @@ Requires Python 3.12 or newer. Dependencies: NumPy, SciPy, Matplotlib, PySide6, 
 
 On Linux, gmsh and Qt need a few system libraries: `sudo apt install libglu1-mesa libxcursor1 libxinerama1 libxft2 libegl1 libxkbcommon0`.
 
-To check an install, run `python tests/smoke_test.py` (about 20 s). It loads the example DXF and STEP files, solves them and flies ions.
+To check an install, run `python tests/smoke_test.py` (under a minute). It loads the example DXF and STEP files, solves them and flies ions.
 
 ### Standalone app (no Python needed)
 
@@ -162,15 +163,35 @@ The general tab for your own electrodes. Work down the left panel:
 
 In the **Ion funnel** tab, imported CAD bodies are also clickable and colored by voltage, and the same Quick / Detailed grid choice is there.
 
+### OA-TOF
+
+The beam arrives along z through the pusher. A pulse on the pusher plate (and the puller grid) pushes a slice of it up the flight axis, through the acceleration gap, down the drift tube, into the reflectron and back to the detector. Set:
+
+* **Ions:** one row per species (m/z, charge, number); the first row is the reference for scans and tuning. **Positive / Negative ions** flips the sign of every voltage on the tab.
+* **Incoming beam:** energy along z and its spread, where the beam sits in the pusher gap, its size, its divergence (and an optional extra thermal spread), and the length of the pusher window.
+* **Pusher and acceleration:** the two gaps, the DC on the pusher plate and puller grid, the pusher and puller pulse amplitudes, the drift-tube voltage, and the pulse rise and fall (10–90 %, linear or RC), width and rate. **Pulse from** takes the timing and voltages from a driver instead (the **OA-TOF pusher and puller** template).
+* **Flight tube:** two-stage, single-stage or linear; drift length, reflectron stage depths and voltages, where the detector sits, and the grid transmission. **Suggest reflectron voltages** sets first-order energy focusing for the reference ion, counted from the source's space focus (shown under the button).
+* **Detector:** its size, where it sits along z (by default where the reference ion lands), timing jitter and digitizer bin.
+
+**Run modes.** *Single shot* flies every species once and fills **Layout** (ion paths in the whole tube and in the source), **Arrival times** (each peak with its resolution), **Mass spectrum** (calibrated t = t0 + k√(m/z), with zooms on each group of peaks), **Peak width** (each spread alone: beam width, turnaround, detector jitter, then all together), and **Detector** (where ions land). The results box gives flight time, FWHM, resolution, transmission, duty cycle and the highest m/z before the next push overlaps. *Scan a setting* plots resolution and flight time against any voltage, length or the pulse rise. *Tune reflectron* searches the stage 1 and back-plate voltages for the best resolution and copies them in. **Potentials** shows the potential along the flight axis between pulses and with the pulse on, and the pulse edge.
+
+| Two-stage reflectron: ion paths | Mass spectrum, m/z 1000 and 1001 resolved |
+|---|---|
+| ![OA-TOF layout](docs/screenshots/tof_layout.png) | ![OA-TOF mass spectrum](docs/screenshots/tof_mass_spectrum.png) |
+
+| What sets the peak width | Resolution vs reflectron back plate |
+|---|---|
+| ![OA-TOF peak width](docs/screenshots/tof_peak_width.png) | ![OA-TOF scan](docs/screenshots/tof_scan.png) |
+
 ### Drivers
 
-The electronics, defined once and used everywhere. Start from a template (**TWAVE/RF combiner (16 outputs)**, **Quad RF + 8 tones** on the RF or dipolar on the x rods, **RF pair**, **DC supply**, or empty), then edit:
+The electronics, defined once and used everywhere. Start from a template (**TWAVE/RF combiner (16 outputs)**, **Quad RF + 8 tones** on the RF or dipolar on the x rods, **OA-TOF pusher and puller**, **RF pair**, **DC supply**, or empty), then edit:
 
-* **RF and TWAVE timing:** RF frequency; number of TWAVE phases, how many are high at once, amplitude, speed at a reference pitch (the step time is pitch / speed) and the edge rise time.
-* **Outputs:** name, DC, RF amplitude and phase (0 = RF+, 180 = RF−), which TWAVE phase it carries (blank for none), and **Tones ×**: +1, −1 or 0, how the excitation tones are added to that output.
+* **RF, TWAVE and pulse timing:** RF frequency; number of TWAVE phases, how many are high at once, amplitude, speed at a reference pitch (the step time is pitch / speed) and the edge rise time; pulse rate, delay, width, rise and fall (10–90 %) and edge shape (linear or RC).
+* **Outputs:** name, DC, RF amplitude and phase (0 = RF+, 180 = RF−), which TWAVE phase it carries (blank for none), **Tones ×**: +1, −1 or 0, how the excitation tones are added to that output, and **Pulse**: the volts added while the pulse is high.
 * **Excitation tones:** frequency, amplitude and phase of each, with an on/off box.
 
-The right side plots the selected outputs' waveforms and the TWAVE gate sequence. Drivers are saved automatically (in `~/.ionsim/drivers.json`) and can be exported and imported as `.iondrv` files; `examples/drivers/` has the combiner and both quad tone drivers. In a device, a driver costs one field solve per distinct component, not per output: the 16-output combiner on the example board needs 10 (DC, RF and 8 TWAVE phases).
+The right side plots the selected outputs' waveforms and the TWAVE gate sequence. Drivers are saved automatically (in `~/.ionsim/drivers.json`) and can be exported and imported as `.iondrv` files; `examples/drivers/` has the combiner, both quad tone drivers and the TOF pusher and puller. A pulsed output wired to an electrode in the Device builder adds one more field part. In a device, a driver costs one field solve per distinct component, not per output: the 16-output combiner on the example board needs 10 (DC, RF and 8 TWAVE phases).
 
 | Combiner outputs (TW1/TW2, RF+ and RF−, 100 ns edges) | TWAVE gate sequence |
 |---|---|
@@ -198,6 +219,7 @@ python examples/twave_demo.py      # a few min, writes PNGs 5-8 to out/
 python examples/faims_demo.py      # ~40 s, writes PNGs 9-11 to out/
 python examples/inlet_demo.py      # seconds, writes PNGs 12-14 to out/
 python examples/funnel_demo.py     # ~6 min, writes PNGs 15-20 to out/
+python examples/tof_demo.py        # seconds, writes PNGs 21-23 to out/
 ```
 
 ### Quadrupole mass filter
@@ -305,9 +327,17 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * **Grids:** flat boards and 3D CAD use the 3D voxel grid; profiles use the axisymmetric grid; 2D cross-sections use a planar 2D grid. Interiors are painted first, then outlines, so neighbors never steal each other's nodes.
 * **Flight:** the same Langevin integrator as the funnel. The time step is picked from the RF period, the TWAVE step time and the device length, and flight time from the expected drift.
 
+### OA-TOF (`ionsim/tof.py`)
+
+* **Geometry:** planes along the flight axis x: pusher plate, puller grid, drift grid, detector, reflectron entrance, stage 1 grid and back plate. Every gap is bounded by ideal grids, so its field is uniform along x and only changes in time (the pulse). Ions keep their z and y velocity, which sets the drift angle and where they land on the detector.
+* **Flight:** inside a gap the motion is a parabola, so the time to the next grid is the root of a quadratic and the flight is exact gap by gap. While the pulse is rising or falling the gap fields are held for short steps at their midpoint values (second order in the step). A run of 10 000 ions takes well under a second.
+* **Beam:** positions are Gaussian across the push direction and uniform along the pusher window; the push-direction velocity comes from the divergence (v_x = v_z tan θ) plus an optional thermal spread. Turnaround time is therefore 2 m v_x / qE.
+* **Results:** resolution = t / 2·FWHM, with the detector jitter added before the FWHM; grid transmission is applied per crossing as a weight. Duty cycle = window / (v_z · period) times the detected fraction.
+* **Reflectron suggestion:** the source's first-order space focus D (Wiley–McLaren, two-field source) is where the reflectron must refocus from. Single-stage: the turning depth is a quarter of the field-free path from D to the detector. Two-stage: stage 1 takes 2/3 of the energy and the back plate is set so the flight time is stationary in energy.
+
 ### Drivers (`ionsim/drivers.py`)
 
-* **Waveform:** each output is V(t) = DC + RF cos(2πf t + φ) + (Tones ×) Σ A_k cos(2πf_k t + φ_k) + A_TW · gate_p(t). Phase p's gate is high while ((p − step) mod N) < n_on, the step advances every pitch / speed, and each edge ramps linearly over the rise time.
+* **Waveform:** each output is V(t) = DC + RF cos(2πf t + φ) + (Tones ×) Σ A_k cos(2πf_k t + φ_k) + A_TW · gate_p(t) + A_pulse · pulse(t). Phase p's gate is high while ((p − step) mod N) < n_on, the step advances every pitch / speed, and each edge ramps linearly over the rise time.
 * **Field parts:** a device is solved once per distinct component: DC, cos and sin of each frequency in use, and each TWAVE phase of each driver. Outputs that share a component share its solve, so 16 outputs or 8 tones stay cheap. Electrodes not wired to a driver use the device's own RF and TWAVE settings as before.
 * **Quadrupole:** the rods are four separate electrodes, each driven by its output's waveform. For a/q the tab uses U = (DC_x − DC_y)/2 and V = |RF_x − RF_y|/2 (phasors, averaged over each rod pair). Secular frequencies come from the Floquet characteristic exponent β, f = β f_RF / 2, in x from (a, q) and in y from (−a, −q).
 
@@ -376,6 +406,12 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * PCB rings vs all-metal plates (100 Vpp, m/z 500): both transmit 100%, and transit is 1.33 vs 1.29 ms. The FR4 between the copper rings slightly weakens the axial DC field.
 * Physics: with 140 Vpp and a 2.0 mm final ID, m/z 500 ions stall on axis between the last two rings. The pseudopotential calculation shows a 1.1 V axial barrier there against a 1.5 V/mm push. That's the known small-ID trapping at funnel exits, and the reason the defaults use 2.5 mm and 100 Vpp.
 
+**OA-TOF**
+* Flight time of an ion starting at rest with an instant pulse matches the closed form (uniform acceleration in each gap, then drift) to 1e-9.
+* Linear TOF with only a spatial spread: the best detector distance from a scan is 86.0 mm, the Wiley–McLaren space focus 86.0 mm.
+* Single-stage reflectron: the suggested back plate (quarter-depth rule) is within 20 V (1.3 %) of the best voltage from a scan.
+* Defaults (6 kV, 600 mm drift, two-stage reflectron, 10 eV beam 0.5 mm wide with 0.5° divergence, 10 ns rise, 0.2 ns jitter): resolution about 17 000 for m/z 500 and 1000, m/z 1000 and 1001 baseline resolved, set by the turnaround time (0.9 ns) and detector jitter (0.5 ns); the beam width alone gives 0.1 ns once the reflectron refocuses the space focus. The automatic tune lands within 0.5 % of the suggested voltages.
+
 **Drivers**
 * TWAVE gates: 4 of 8 phases high at every step, phase 1 high at step 0 and off at step 1, stepping one phase per step (smoke test).
 * The example TWAVE board with its 96 pads wired to the 16-output combiner (RF off on the pads) transmits 97% at 14.1 m/s, the same as with the board's own TWAVE settings (97%, 14.3 m/s).
@@ -424,6 +460,11 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * The internal temperature follows a single relaxation time, not a full energy-transfer model, and ions have no internal-energy distribution (all ions in a bin share one T_int). Use the numbers to compare devices, regions and settings, and treat absolute fragmentation yields as estimates that depend on your Ea and A.
 * The quadrupole tab flies in vacuum, so tone excitation there ejects ions but does not heat them; collisional activation in a gas-filled quad comes with the drag-field quad below.
 
+**OA-TOF, not modelled yet**
+* Ideal grids: no field penetration through the meshes, no fringe fields at the plate edges, no grid scattering. Gridless reflectrons need a real field solve (the Device builder can do the field; flying a pulsed vacuum TOF there is the next step).
+* No space charge in the pushed packet, no metastable decay, no detector dead time or saturation.
+* The beam in the pusher is generated from its size and divergence. Taking it from an upstream stage (a quad or collision cell exit) comes with the stage-to-stage ion handoff.
+
 **Next: drag-field quadrupole (collision cell).** The integrator already has the three hooks this needs:
 
 1. **Axial drag field:** a new `FieldSource` that adds E_z(z) (from segmented rods, tilted or tapered auxiliary electrodes, or a resistive coating). For segmented rods, solve an axial 1D/3D problem and add a DC ramp per segment.
@@ -461,9 +502,10 @@ ION-SIM/
 │   ├── device.py           # device builder: electrodes, patterns, grids, solve, flight
 │   ├── drivers.py          # electronics: outputs, RF, TWAVE gates, excitation tones, library
 │   ├── heating.py          # effective / internal ion temperature, fragmentation estimate
+│   ├── tof.py              # OA-TOF: pusher pulse, reflectron, exact gap-by-gap flight, resolution
 │   └── gui/                # PySide6 app: one tab per device, shared widgets,
 │                           #   device_tab.py and electrode_view.py (clickable electrodes),
-│                           #   drivers_tab.py, heating_view.py, ion_table.py (ion mixtures)
+│                           #   drivers_tab.py, tof_tab.py, heating_view.py, ion_table.py (ion mixtures)
 ├── examples/               # one demo per device; geometry/ has example STEP, DXF and .ionsim setups,
 │                           #   drivers/ has example .iondrv drivers
 ├── tests/smoke_test.py     # quick end-to-end check of imports, solves and the app window
