@@ -1,7 +1,7 @@
 """Regenerate the app screenshots used in README.md.
 
 Run:  python docs/make_screenshots.py      (opens the window, runs every tab, ~2 min)
-      add --workspace to redo only the two workspace shots
+      add --workspace to redo only the workspace and Instrument tab shots
 """
 import os, sys, tempfile
 os.environ.setdefault("IONSIM_DRIVERS", os.path.join(tempfile.mkdtemp(), "drivers.json"))   # the default drivers
@@ -108,6 +108,7 @@ def go():
     t.mode.setCurrentIndex(1); t.scan_param.setCurrentIndex(0); settle()
     run(t)
     shot(t, "Scan", "tof_scan")
+    instrument()
     workspace()
     app.quit()
 
@@ -140,7 +141,28 @@ def workspace():
     ws.close()
 
 
+def instrument():
+    """The Instrument tab: the example STEP with its parts tagged as stages, side and top cuts, and 3D."""
+    from ionsim.gui.workspace import Workspace
+    ws = Workspace(models=[], persist=False)
+    ws.resize(1500, 900); ws.show(); settle()
+    it = ws.instrument
+    ws.tabs.setCurrentWidget(it); settle()
+    it.load(os.path.join(os.path.dirname(__file__), "..", "examples", "geometry", "instrument.step"))
+    for parts, kind, stage in ((["solid 2", "solid 5"], "Chamber or wall (no model)", ""),
+                               (["solid 1"], "ESI inlet capillary", ""), (["solid 3", "solid 4"], "Ion funnel", "Planar funnel"),
+                               (["solid 6", "solid 7", "solid 8", "solid 9"], "Quadrupole mass filter", "Collision cell"),
+                               (["solid 10", "solid 11"], "OA-TOF", "")):
+        it.selected = parts; it.kind.setCurrentText(kind); it.stage.setText(stage); it._tag()
+    it._picked("solid 3", False); it._picked("solid 4", True); settle()
+    ws.grab().save(os.path.join(OUT, "instrument_layout.png")); print("saved instrument_layout")
+    it.plots.setCurrentIndex(1); settle()
+    ws.grab().save(os.path.join(OUT, "instrument_3d.png")); print("saved instrument_3d")
+    ws.close()
+
+
 def only_workspace():
+    instrument()
     workspace()
     app.quit()
 

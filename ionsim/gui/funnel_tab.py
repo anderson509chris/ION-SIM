@@ -11,6 +11,7 @@ from ..laplace import Drive
 from ..cad import load_bodies, FILE_FILTER, UNITS
 from ..twave import mobility
 from ..stages import ExitIons
+from ..cad import mesh_section as _mesh_section
 from .common import ParamForm, SimTab
 from .stage_picker import SourcePicker
 from .electrode_view import ElectrodeView, INSULATOR
@@ -735,21 +736,6 @@ def _section_of(arr, fld, center):
         return np.concatenate([arr[:0:-1], arr], axis=0)
     jy = int(np.clip(round((center[1] - g.y[0]) / g.h), 0, g.shape[1] - 1))
     return arr[:, jy, :]
-
-
-def _mesh_section(tris, cut, keep, at):
-    """Segments where triangles cross the plane coordinate[cut] = at, as (keep-axis, z) pairs."""
-    d = tris[:, :, cut] - at
-    pts, crosses = [], []
-    for a, b in ((0, 1), (1, 2), (2, 0)):
-        x = d[:, a] * d[:, b] < 0
-        f = (d[:, a] / np.where(x, d[:, a] - d[:, b], 1))[:, None]
-        pts.append(tris[:, a] + f * (tris[:, b] - tris[:, a])); crosses.append(x)
-    crosses = np.array(crosses).T
-    ok = crosses.sum(1) == 2
-    first_two = np.argsort(~crosses[ok], axis=1, kind="stable")[:, :2]
-    seg = np.take_along_axis(np.stack(pts, axis=1)[ok], first_two[:, :, None], axis=1)
-    return seg[:, :, [keep, 2]]
 
 
 def _rect(x, y, w, h, color, alpha=1.0):

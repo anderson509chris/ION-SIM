@@ -74,6 +74,7 @@ The app opens on **Home**, a start page listing every device. Each pick opens a 
   * an **OA-TOF** takes its beam (energy and spread, size, divergence) and ion mixture from a quadrupole, funnel or Device builder exit (**Incoming beam > Ions from**; scaled so the most abundant species has 2000 ions).
 
   Each model reads the last run of the one before it, and the tab shows the link (*OA-TOF ← Collision cell*). **Run > Run with the stages before it** (F6) runs the whole chain in order.
+* **Instrument.** The Instrument tab starts from a CAD model of the whole system. **Load STEP…** reads every solid (chambers, capillary, funnel boards, rods, TOF plates; STL and OBJ work too) and draws them cut along the ion axis, from the side and from above, and in 3D. Click a part's outline (Ctrl or Shift click for more), pick what it is (a model, or *Chamber or wall*), give it a stage name and press **Tag**; parts with the same stage name are one model, such as both boards of a planar funnel. **Make linked models** then opens a tab per stage, named after it, in the order the stages sit along the ion path, each linked to the stage before it that can feed it. Load each stage's own detailed geometry in its tab (the planar funnel's DXF, for example) and run it alone or the whole chain with F6. The CAD model and its tags are saved with the setup. `examples/geometry/instrument.step` (made by `make_instrument_step.py`) is an inlet, planar funnel, interface, quadrupole and TOF pusher in two chambers to try it on.
 * **Setups.** **File > Save setup** (Ctrl+Shift+S) writes the whole workspace to one `.ionsetup` file: every model with all its settings and ion tables, which model feeds which, the drivers, and the geometry files the funnel and Device builder use (named relative to the setup, so keep them beside it or below it). **File > Open setup** (Ctrl+O) replaces the open models with the saved ones; **New setup** starts empty. When the app closes it keeps the setup for next time, so it opens on Home with everything as you left it. Results are not saved: run again (F6 for a chain). A saved driver that differs from your library's driver of the same name comes in as *name (from setup)*, and the setup's models use that one.
 * **Run** (F5) runs the model in front, **Stop** (Shift+F5) stops it.
 
@@ -82,6 +83,10 @@ Runs happen in the background. Every plot can be zoomed, panned and saved (**Fil
 | Home | OA-TOF at the end of inlet → funnel → collision cell, after Run with the stages before it |
 |---|---|
 | ![Home](docs/screenshots/workspace_add_model.png) | ![Workspace](docs/screenshots/workspace.png) |
+
+| Instrument tab: parts tagged as stages (planar funnel selected) | The same instrument in 3D |
+|---|---|
+| ![Instrument layout](docs/screenshots/instrument_layout.png) | ![Instrument 3D](docs/screenshots/instrument_3d.png) |
 
 **Ion mixtures.** The quadrupole, TWAVE, ion funnel and device builder tabs take their ions from an **Ions** table: one row per species (name, m/z, charge, K0, number of ions), with **Add** (copies the selected row) and **Remove**. All species fly together in one run. Trajectories are coloured by species (solid: transmitted, dotted: lost, dashed: still flying), arrival-time and exit plots split by species, and the results box and CSV give transmission, transit time and heating for each species. Where a tab needs one reference ion (the quadrupole's a/q operating point and mass scan, the funnel's m/z scan and RF effective-potential map), it uses the first row.
 
@@ -530,7 +535,8 @@ ION-SIM/
 │   ├── tof.py              # OA-TOF: pusher pulse, reflectron, exact gap-by-gap flight, resolution
 │   ├── stages.py           # stages: one model's exit ions (or the inlet's gas) start the next model
 │   ├── collisions.py       # collision cell: hard-sphere gas collisions, axial drag field
-│   └── gui/                # PySide6 app: workspace.py (Home, one tab per model, setup files), one controller per device
+│   └── gui/                # PySide6 app: workspace.py (Home, one tab per model, setup files), instrument_tab.py
+│                           # (whole-instrument CAD, parts tagged as stages), one controller per device
 │                           #   (the *_tab.py files, also the classic tabbed window), shared widgets,
 │                           #   device_tab.py and electrode_view.py (clickable electrodes),
 │                           #   drivers_tab.py, tof_tab.py, heating_view.py, ion_table.py (ion mixtures)

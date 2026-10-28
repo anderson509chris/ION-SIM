@@ -169,3 +169,18 @@ def write_ring_stack_step(path, rings):
     text = re.sub(r"PRODUCT\('Open CASCADE STEP translator [\d.]+ 1\.\d+',\s*'Open CASCADE STEP translator [\d.]+ 1\.\d+'",
                   lambda m: "PRODUCT('{0}','{0}'".format(next(names, "part")), text)
     open(path, "w").write(text)
+
+
+def mesh_section(tris, cut, keep, at):
+    """Segments where triangles cross the plane coordinate[cut] = at, as (keep-axis, z) pairs."""
+    d = tris[:, :, cut] - at
+    pts, crosses = [], []
+    for a, b in ((0, 1), (1, 2), (2, 0)):
+        x = d[:, a] * d[:, b] < 0
+        f = (d[:, a] / np.where(x, d[:, a] - d[:, b], 1))[:, None]
+        pts.append(tris[:, a] + f * (tris[:, b] - tris[:, a])); crosses.append(x)
+    crosses = np.array(crosses).T
+    ok = crosses.sum(1) == 2
+    first_two = np.argsort(~crosses[ok], axis=1, kind="stable")[:, :2]
+    seg = np.take_along_axis(np.stack(pts, axis=1)[ok], first_two[:, :, None], axis=1)
+    return seg[:, :, [keep, 2]]

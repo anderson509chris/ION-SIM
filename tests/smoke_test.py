@@ -201,7 +201,7 @@ w = MainWindow()
 check("app window", w.tabs.count() >= 8, f"{w.tabs.count()} tabs")
 from ionsim.gui.workspace import Workspace, TEMPLATES
 ws = Workspace(models=[(t, None) for t in TEMPLATES], persist=False)
-check("workspace", len(ws.models) == len(TEMPLATES) and ws.tabs.count() == len(TEMPLATES) + 2
+check("workspace", len(ws.models) == len(TEMPLATES) and ws.tabs.count() == len(TEMPLATES) + 3
       and ws.tabs.currentWidget() is ws.home, f"{len(ws.models)} model tabs, opens on Home")
 # stages: an OA-TOF model takes its beam and ions from the ions that left a quadrupole model
 from ionsim.stages import ExitIons
@@ -270,4 +270,16 @@ same = all(settings_io.save(a.ctl.scroll.widget()) == settings_io.save(b.ctl.scr
            for a, b in zip(ws3.models, ws4.models))
 check("setup file", same and not notes and [ws4.source_of(m).name if ws4.source_of(m) else None for m in ws4.models]
       == [None, "In", "F", "Q"], f"{len(ws4.models)} models, {os.path.getsize(setup) // 1024} kB")
+# instrument tab: tag the parts of one STEP, get linked models in order along the ion path
+ws5 = Workspace(models=[], persist=False)
+it = ws5.instrument
+it.load(os.path.join(os.path.dirname(__file__), "..", "examples", "geometry", "instrument.step"))
+for parts, kind, stage in ((["solid 1"], "ESI inlet capillary", ""), (["solid 3", "solid 4"], "Ion funnel", "Planar funnel"),
+                           (["solid 6", "solid 7", "solid 8", "solid 9"], "Quadrupole mass filter", "Cell"),
+                           (["solid 10", "solid 11"], "OA-TOF", "")):
+    it.selected = parts; it.kind.setCurrentText(kind); it.stage.setText(stage); it._tag()
+it._make()
+check("instrument tab", len(it.bodies) == 11 and [m.name for m in ws5.models] == ["Inlet", "Planar funnel", "Cell", "OA-TOF"]
+      and [ws5.source_of(m).name if ws5.source_of(m) else None for m in ws5.models] == [None, "Inlet", "Planar funnel", "Cell"],
+      " → ".join(f"{m.name} {m.region[0]:.0f}-{m.region[1]:.0f} mm" for m in ws5.models))
 print(f"all good in {time.time() - t0:.0f} s")

@@ -26,6 +26,7 @@ from .funnel_tab import FunnelTab
 from .device_tab import DeviceTab
 from .tof_tab import TofTab
 from .drivers_tab import DriversTab
+from .instrument_tab import InstrumentTab
 
 APP_NAME = "Ion Sim"
 SETUP_FILTER = "Ion Sim setup (*.ionsetup)"
@@ -101,12 +102,16 @@ class Workspace(QtWidgets.QMainWindow):
         bar.customContextMenuRequested.connect(self._tab_menu)
         bar.tabBarDoubleClicked.connect(lambda i: self._rename(self._model_at(i)))
         self.home = self._start_page()
+        self.instrument = InstrumentTab(TEMPLATES)
+        self.instrument.make_models.connect(self.make_stages)
         self.drivers = DriversTab()
-        for w, name in ((self.home, "Home"), (self.drivers, "Drivers")):
+        for w, name in ((self.home, "Home"), (self.instrument, "Instrument"), (self.drivers, "Drivers")):
             self.tabs.addTab(w, name)
             i = self.tabs.indexOf(w)
             bar.setTabButton(i, QtWidgets.QTabBar.RightSide, None)
             bar.setTabButton(i, QtWidgets.QTabBar.LeftSide, None)
+        self.tabs.setTabToolTip(self.tabs.indexOf(self.instrument),
+                                "Load a CAD model of the whole instrument and say which model each part is")
         self.tabs.setTabToolTip(self.tabs.indexOf(self.drivers),
                                 "The electronics: RF, TWAVE, excitation tones and pulses, wired to electrodes in the models")
         self.setCentralWidget(self.tabs)
@@ -243,7 +248,8 @@ class Workspace(QtWidgets.QMainWindow):
             if isinstance(m.ctl, FunnelTab) and m.ctl.cad_path:
                 row["cad"] = _rel(m.ctl.cad_path, base_dir)
             rows.append(row)
-        return {"ionsim_setup": 1, "models": rows, "drivers": self.drivers.store.lib.to_list()}
+        return {"ionsim_setup": 1, "models": rows, "drivers": self.drivers.store.lib.to_list(),
+                "instrument": self.instrument.state(base_dir)}
 
     def apply_setup(self, d, base_dir="", quiet=False):
         """Replace the open models with the ones in a setup_state."""
@@ -275,6 +281,8 @@ class Workspace(QtWidgets.QMainWindow):
         for m, r in zip(self.models, rows):                 # links again, now every model's settings are in
             if m.is_stage:
                 self.link(m, r.get("ions_from"))
+        if d.get("instrument") and not self.instrument.set_state(d["instrument"], base_dir):
+            notes.append("the instrument CAD file was not found")
         self._save_models()
         if notes and not quiet and QtWidgets.QApplication.platformName() != "offscreen":
             box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Information, APP_NAME,
@@ -358,6 +366,27 @@ class Workspace(QtWidgets.QMainWindow):
         self.setWindowTitle(f"{os.path.basename(self.path)} – {APP_NAME}" if self.path else APP_NAME)
 
     # ---------- stages ----------
+    def make_stages(self, stages):
+        """From the Instrument tab: [(template, stage name, z range)] in order along the ion path. Opens a tab
+        for each stage that has none, and links each to the nearest stage before it that can feed it."""
+        made, chain = [], []
+        for tpl, name, z in stages:
+            m = next((x for x in self.models if x.name == name), None)
+            if m is None:
+                m = self.add_model(tpl, name, select=False)
+                made.append(m)
+            m.region = z
+            chain.append(m)
+        for k, m in enumerate(chain):
+            src = next((p for p in reversed(chain[:k]) if m.can_take(p)), None)
+            if m.is_stage and src is not None:
+                self.link(m, src.name)
+        self.statusBar().showMessage(
+            (f"Opened {', '.join(x.name for x in made)}. " if made else "Every stage already has a tab. ")
+            + "Load each one's geometry in its tab; F6 on the last runs the chain.", 12000)
+        if made:
+            self.tabs.setCurrentWidget(made[0].ctl)
+
     def link(self, stage, source):
         """Make `stage` take its ions (or gas) from the model named `source`; None sets them by hand."""
         stage.ctl.picker.pick(source)
@@ -465,8 +494,10 @@ class Workspace(QtWidgets.QMainWindow):
         title.setStyleSheet("font-size: 20px; font-weight: bold;")
         v.addWidget(title)
         sub = QtWidgets.QLabel("Each pick opens a model in its own tab. Several can be open at once, and the Drivers "
-                               "tab holds the electronics they share. Models can be chained into the stages of one "
-                               "instrument: ESI inlet → ion funnel → quadrupole (or collision cell) → OA-TOF.")
+                               "tab holds the electronics they share. Models chain into the stages of one instrument: "
+                               "ESI inlet → ion funnel → quadrupole (or collision cell) → OA-TOF. To start from a CAD "
+                               "model of the whole instrument, use the Instrument tab: tag its parts and it opens the "
+                               "linked models for you.")
         sub.setWordWrap(True); v.addWidget(sub); v.addSpacing(12)
         grid = QtWidgets.QGridLayout()
         for i, (tpl, (_, desc)) in enumerate(TEMPLATES.items()):
