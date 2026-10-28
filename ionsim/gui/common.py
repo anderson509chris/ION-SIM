@@ -103,6 +103,9 @@ class SimTab(QtWidgets.QWidget):
     """Layout shared by every simulation tab: inputs on the left, plots on the right,
     Run / Stop / progress at the bottom of the inputs, a results box under the plots."""
 
+    ran = QtCore.Signal(bool)          # a run ended: True when it finished, False when it failed
+    exit_changed = QtCore.Signal()     # exit_ions was replaced (the next stage reads it)
+
     def __init__(self, plot_names, parent=None):
         super().__init__(parent)
         split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
@@ -140,6 +143,11 @@ class SimTab(QtWidgets.QWidget):
         self.stop_btn.clicked.connect(self.stop)
         self._thread = None
         self.last_table = None     # (header, rows) for CSV export
+        self.exit_ions = None      # stages.ExitIons of the last run, for the next stage
+
+    def set_exit(self, ex):
+        self.exit_ions = ex
+        self.exit_changed.emit()
 
     def log(self, text):
         self.results.appendPlainText(text)
@@ -177,9 +185,11 @@ class SimTab(QtWidgets.QWidget):
         self.bar.setValue(100)
         self.status.setText("Stopped (partial results shown)" if cancelled else "Done")
         on_done(result)
+        self.ran.emit(True)
 
     @QtCore.Slot(str)
     def _failed(self, tb):
         self._cleanup()
         self.status.setText("Error - see results box")
         self.log(tb)
+        self.ran.emit(False)

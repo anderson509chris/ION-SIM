@@ -11,6 +11,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..device import KINDS, QUALITY, Device, DeviceField, from_drawing, from_bodies, fly_device, device_gas_flow
 from ..cad import CAD_EXT, MESH_EXT, UNITS, load_bodies
+from ..stages import ExitIons
 from .common import ParamForm, SimTab
 from .electrode_view import ElectrodeView, INSULATOR
 from .funnel_tab import FLOWS
@@ -752,6 +753,9 @@ class DeviceTab(SimTab):
         self.last_table = (["species", "mz", "z", "status(1=out,2=lost,0=flying)", "x_mm", "y_mm", "z_mm", "t_ms"],
                            [[species[k].name, species[k].mz, species[k].z, int(s), *(p / MM), t * 1e3]
                             for k, s, p, t in zip(res.species, st, res.final_pos, res.t_end)])
+        io = out["io"]
+        self.set_exit(ExitIons.from_result(f"device run at {io['p']:g} Torr", res, species,
+                                           (io["x0"] * MM, io["y0"] * MM), io["p"], io["T"]))
         self._draw_potential(fld, res.space_charge)
         self._draw_traj(fld, res, info, species)
         self._draw_results(res, info, species)

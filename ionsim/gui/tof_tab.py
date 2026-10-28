@@ -12,6 +12,8 @@ from .ion_table import IonTable, species_color, species_legend
 
 MODES = ["Single shot", "Scan a setting", "Tune reflectron for best resolution"]
 MANUAL = "Manual (set below)"
+MANUAL_BEAM = "Set below"
+FROM_STAGE = ("e", "de", "sx", "sy", "div", "temp")     # beam settings an earlier stage fills in
 FLIGHT = {"Two-stage reflectron": "two-stage", "Single-stage reflectron": "single-stage",
           "Linear (no reflectron)": "none"}
 SHAPES = {"Linear ramp": "linear", "RC (exponential)": "rc"}
@@ -50,6 +52,21 @@ class TofTab(SimTab):
         ])
         self.beam.setToolTip("The divergence and thermal spread set the turnaround time; the beam size sets "
                              "the spatial spread the source and reflectron must focus")
+        # ---- stages: the beam can come from the exit of the model before this one ----
+        self.sources = {}                       # model name -> SimTab that keeps exit_ions
+        self.beam_src = QtWidgets.QComboBox(); self.beam_src.addItem(MANUAL_BEAM)
+        self.beam_src.setToolTip("Take the beam and the ion mixture from the ions that left another model "
+                                 "(a quadrupole, ion funnel or Device builder run with trajectories)")
+        self.beam_acc = QtWidgets.QDoubleSpinBox(); self.beam_acc.setRange(-1e4, 1e4); self.beam_acc.setDecimals(2)
+        self.beam_acc.setValue(10.0); self.beam_acc.setSuffix(" V")
+        self.beam_acc.setToolTip("The DC step from the last electrode of the model before to the pusher: "
+                                 "it adds this much axial energy per charge")
+        self.beam_note = QtWidgets.QLabel(); self.beam_note.setWordWrap(True); self.beam_note.hide()
+        self.beam.layout().insertRow(0, "Ions from", self.beam_src)
+        self.beam.layout().insertRow(1, "  energy added on the way in", self.beam_acc)
+        self.beam.layout().addRow(self.beam_note)
+        self.beam_src.currentIndexChanged.connect(self._apply_src)
+        self.beam_acc.valueChanged.connect(self._apply_src)
 
         # ---- pusher ----
         self.pusher = ParamForm("Pusher and acceleration", [
@@ -137,6 +154,70 @@ class TofTab(SimTab):
         self._fill_drivers()
         self._flight_changed()
         self._scan_range()
+        self._apply_src()
+
+    # ---------- stages ----------
+    def set_sources(self, sources):
+        """sources: {model name: SimTab} whose exit ions can fill this beam (the models before this one)."""
+        for tab in self.sources.values():
+            try:
+                tab.exit_changed.disconnect(self._src_updated)
+            except (RuntimeError, TypeError):
+                pass
+        self.sources = dict(sources)
+        for tab in self.sources.values():
+            tab.exit_changed.connect(self._src_updated)
+        cur = self.beam_src.currentText()
+        self.beam_src.blockSignals(True)
+        self.beam_src.clear(); self.beam_src.addItem(MANUAL_BEAM)
+        self.beam_src.addItems([f"{name} exit" for name in self.sources])
+        self.beam_src.setCurrentIndex(max(self.beam_src.findText(cur), 0))
+        self.beam_src.blockSignals(False)
+        self._apply_src()
+
+    def source(self):
+        """The SimTab this beam comes from, or None when it is set by hand."""
+        k = self.beam_src.currentIndex()
+        return list(self.sources.values())[k - 1] if k > 0 else None
+
+    def source_name(self):
+        k = self.beam_src.currentIndex()
+        return list(self.sources)[k - 1] if k > 0 else None
+
+    def _src_updated(self):
+        if self.sender() is self.source():
+            self._apply_src(log=True)
+
+    def _apply_src(self, *_, log=False):
+        tab = self.source()
+        linked = tab is not None
+        self.beam_acc.setVisible(linked)
+        self.beam.layout().labelForField(self.beam_acc).setVisible(linked)
+        for k in FROM_STAGE:
+            self.beam.boxes[k].setEnabled(not linked)
+        self.ion_table.table.setEnabled(not linked)
+        for b in self.ion_table.findChildren(QtWidgets.QPushButton):
+            b.setEnabled(not linked)
+        self.beam_note.setVisible(linked)
+        if not linked:
+            return
+        name = self.source_name()
+        if tab.exit_ions is None:
+            self.beam_note.setText(f"Run '{name}' with trajectories: the ions that leave it fill this beam and the ion table.")
+            return
+        try:
+            beam, species, notes = tab.exit_ions.tof_beam(self.beam_acc.value())
+        except ValueError as e:
+            self.beam_note.setText(f"From '{name}': {e}.")
+            return
+        for k, v in beam.items():
+            self.beam.set(k, v)
+        self.ion_table.set_species(species)
+        ex = tab.exit_ions
+        self.beam_note.setText(f"From the {ex.source} of '{name}': {ex.n} ions. " + "; ".join(notes) + ".")
+        if log:
+            self.log(f"Beam updated from '{name}': {beam['e']:.3g} ± {beam['de']:.2g} eV, size {beam['sx']:.3g} × "
+                     f"{beam['sy']:.3g} mm, divergence {beam['div']:.3g}°")
 
     # ---------- settings ----------
     def _species(self):
@@ -365,6 +446,11 @@ class TofTab(SimTab):
 
     # ---------- run ----------
     def run(self):
+        tab = self.source()
+        if tab is not None and (tab.exit_ions is None or tab.exit_ions.n == 0):
+            self.log(f"Input error: no ions from '{self.source_name()}' yet. Run it with trajectories first "
+                     "(Run > Run with the stages before it, F6, runs both).")
+            return
         try:
             species = self._species()
             tof, beam = self._model()

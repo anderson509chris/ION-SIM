@@ -33,6 +33,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self.device, "Device builder (DXF / CAD)")
         self.tabs.addTab(self.tof, "OA-TOF")
         self.tabs.addTab(self.drivers, "Drivers")
+        self.tof.set_sources({"Quadrupole": self.quad, "Ion funnel": self.funnel, "Device builder": self.device})
         self.setCentralWidget(self.tabs)
 
         m = self.menuBar().addMenu("&File")

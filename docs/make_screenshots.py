@@ -1,6 +1,7 @@
 """Regenerate the app screenshots used in README.md.
 
 Run:  python docs/make_screenshots.py      (opens the window, runs every tab, ~2 min)
+      add --workspace to redo only the two workspace shots
 """
 import os, sys, tempfile
 os.environ.setdefault("IONSIM_DRIVERS", os.path.join(tempfile.mkdtemp(), "drivers.json"))   # the default drivers
@@ -112,17 +113,17 @@ def go():
 
 
 def workspace():
-    """The workspace window: a funnel and an OA-TOF model, the TOF run."""
+    """The workspace window: an ion funnel feeding an OA-TOF, both run in turn (Run with the stages before it)."""
     from ionsim.gui.workspace import Workspace
-    ws = Workspace(models=[("Ion funnel", None), ("OA-TOF", None)], persist=False)
+    ws = Workspace(models=[("Ion funnel", None), ("OA-TOF", None, "Ion funnel")], persist=False)
     ws.resize(1500, 900); ws.show(); settle()
     m = ws.models[1]
-    ws.tree.setCurrentItem(m.items["Electrodes and drive"]); settle()
-    m.ctl.run_btn.click(); settle(5)
-    while m.ctl._thread is not None:
+    ws.tree.setCurrentItem(m.items["Ions"]); settle()
+    ws.run_chain(m); settle(5)
+    while ws._chain_now is not None:
         settle(1)
     settle(50)
-    ws.tree.setCurrentItem(m.items["Electrodes and drive"]); settle()
+    ws.tree.setCurrentItem(m.items["Ions"].child(1)); settle()        # Incoming beam, filled from the funnel
     m.plots.setCurrentIndex(list(m.plots.figs).index("Mass spectrum")); settle()
     ws.grab().save(os.path.join(OUT, "workspace.png")); print("saved workspace")
     ws.tree.setCurrentItem(ws.add_item); settle()
@@ -130,5 +131,10 @@ def workspace():
     ws.close()
 
 
-QtCore.QTimer.singleShot(500, go)
+def only_workspace():
+    workspace()
+    app.quit()
+
+
+QtCore.QTimer.singleShot(500, only_workspace if "--workspace" in sys.argv else go)
 app.exec()

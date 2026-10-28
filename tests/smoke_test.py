@@ -204,4 +204,25 @@ ws = Workspace(models=[(t, None) for t in TEMPLATES], persist=False)
 groups = sum(len(m.groups) for m in ws.models)
 check("workspace", len(ws.models) == len(TEMPLATES) and all(m.result_items for m in ws.models) and groups > 40,
       f"{len(ws.models)} models, {groups} setting groups in the tree")
+# stages: an OA-TOF model takes its beam and ions from the ions that left a quadrupole model
+from ionsim.stages import ExitIons
+from ionsim.integrator import Result
+from ionsim.ions import IonSpecies
+rng = np.random.default_rng(1)
+n = 400
+vz = np.sqrt(2 * 5.0 * 1.602176634e-19 / (500 * 1.66053906660e-27))       # 5 eV, m/z 500
+fake = Result(status=np.r_[np.ones(n // 2, int), 2 * np.ones(n // 2, int)], t_end=np.ones(n),
+              final_pos=np.c_[1e-4 * rng.standard_normal((n, 2)), np.zeros(n)],
+              final_vel=np.c_[10 * rng.standard_normal((n, 2)), np.full(n, vz)])
+fake.species = np.r_[np.zeros(n // 4, int), np.ones(n // 4, int), np.zeros(n // 4, int), np.ones(n // 4, int)]
+ex = ExitIons.from_result("test", fake, [IonSpecies("a", 500, 1, 1, n // 2), IonSpecies("b", 500, 1, 1, n // 2)])
+beam, sp, _ = ex.tof_beam(10.0)
+check("stage handoff", ex.n == n // 2 and abs(beam["e"] - 15.0) < 0.01 and abs(beam["sx"] - 0.1) < 0.02
+      and 0 < beam["div"] < 1 and [s.n for s in sp] == [2000, 2000],
+      f"{ex.n} exit ions -> {beam['e']:.2f} eV, {beam['sx']:.3f} mm, {beam['div']:.2f}°")
+ws2 = Workspace(models=[("Quadrupole mass filter", "Q1"), ("OA-TOF", "TOF", "Q1")], persist=False)
+q1, tof = ws2.models
+q1.ctl.set_exit(ex)
+check("stage link", ws2.source_of(tof) is q1 and abs(tof.ctl.beam.values()["e"] - 15.0) < 0.01
+      and "Q1" in tof.root.text(0), tof.root.text(0))
 print(f"all good in {time.time() - t0:.0f} s")

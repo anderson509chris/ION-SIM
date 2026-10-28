@@ -65,16 +65,15 @@ PyInstaller can only build for the operating system it runs on, which is why the
 
 ## The desktop app
 
-The app is one workspace, laid out like COMSOL:
+The app is one workspace: a model tree on the left, and beside it the selected model laid out just like its tab (settings in one scrolling column with **Run**, **Stop** and progress under it, the plot tabs on the right and the results text under the plots).
 
-* **Model tree (left).** *Global definitions > Drivers* holds the electronics shared by every model. Below it, each **model** is one device (quadrupole, TWAVE, FAIMS, ESI inlet, ion funnel, Device builder, OA-TOF) with its settings grouped as **Geometry**, **Electrodes and drive**, **Gas**, **Ions** and **Study**, and its plots under **Results**. **+ Add model…** (or **File > Add model**) opens a page with every device; several models can sit side by side. Right-click a model to run, rename or remove it. The open models come back the next time the app starts.
-* **View (centre).** The plot picked under Results. Picking Geometry or Electrodes brings the drawing forward, so electrodes can be clicked there; after a run the plot it made comes to the front and its Results node is selected.
-* **Settings (right).** The settings of the picked node, with that group scrolled into view.
-* **Run bar and results (bottom).** **Run** (F5), **Stop** (Shift+F5), progress, and the selected model's results text.
+* **Model tree (left).** *Global definitions > Drivers* holds the electronics shared by every model. Below it, each **model** is one device (quadrupole, TWAVE, FAIMS, ESI inlet, ion funnel, Device builder, OA-TOF) with its settings grouped as **Geometry**, **Electrodes and drive**, **Gas**, **Ions** and **Study**, and its plots under **Results**. Picking a settings node scrolls the settings column to that group; picking a Results node shows that plot. **+ Add model…** (or **File > Add model**) opens a page with every device; several models can sit side by side. Right-click a model to run, rename or remove it. The open models, and which model feeds which, come back the next time the app starts.
+* **Stages.** An OA-TOF model can take its ions from a quadrupole, ion funnel or Device builder model: set **Incoming beam > Ions from** (or right-click the TOF > **Take ions from**). The ions that left the other model in its last trajectory run then set the beam energy and spread, the beam size, the divergence and the ion mixture (scaled so the most abundant species has 2000 ions; with ion heating on, only the share that survives intact counts). **energy added on the way in** is the DC step from that model's last electrode to the pusher. The tree shows the link as *OA-TOF ← Ion funnel*, and **Run > Run with the stages before it** (F6) runs the chain in order.
+* **Run** (F5) runs the selected model, **Stop** (Shift+F5) stops it.
 
-Runs happen in the background. Every plot can be zoomed, panned and saved (**File > Save current plot**), and **File > Export results (CSV)** writes the selected model's numbers out. The earlier one-tab-per-device window is still there: **View > Classic tabs window**, or `python ion_sim_app.py --classic`. The sections below describe each device; in the workspace each tab's setting groups are the model's tree nodes and its plots are the Results nodes.
+Runs happen in the background. Every plot can be zoomed, panned and saved (**File > Save current plot**), and **File > Export results (CSV)** writes the selected model's numbers out. The earlier one-tab-per-device window is still there: **View > Classic tabs window**, or `python ion_sim_app.py --classic`; there the OA-TOF tab can take its ions from the Quadrupole, Ion funnel or Device builder tab the same way. The sections below describe each device.
 
-| Add a model | OA-TOF model after a run |
+| Add a model | OA-TOF fed by an ion funnel, after Run with the stages before it |
 |---|---|
 | ![Add a model](docs/screenshots/workspace_add_model.png) | ![Workspace](docs/screenshots/workspace.png) |
 
@@ -179,7 +178,7 @@ In the **Ion funnel** tab, imported CAD bodies are also clickable and colored by
 The beam arrives along z through the pusher. A pulse on the pusher plate (and the puller grid) pushes a slice of it up the flight axis, through the acceleration gap, down the drift tube, into the reflectron and back to the detector. Set:
 
 * **Ions:** one row per species (m/z, charge, number); the first row is the reference for scans and tuning. **Positive / Negative ions** flips the sign of every voltage on the tab.
-* **Incoming beam:** energy along z and its spread, where the beam sits in the pusher gap, its size, its divergence (and an optional extra thermal spread), and the length of the pusher window.
+* **Incoming beam:** energy along z and its spread, where the beam sits in the pusher gap, its size, its divergence (and an optional extra thermal spread), and the length of the pusher window. **Ions from** takes the energy, spread, size, divergence and ion mixture from the exit of a quadrupole, ion funnel or Device builder model instead (see Stages above).
 * **Pusher and acceleration:** the two gaps, the DC on the pusher plate and puller grid, the pusher and puller pulse amplitudes, the drift-tube voltage, and the pulse rise and fall (10–90 %, linear or RC), width and rate. **Pulse from** takes the timing and voltages from a driver instead (the **OA-TOF pusher and puller** template).
 * **Flight tube:** two-stage, single-stage or linear; drift length, reflectron stage depths and voltages, where the detector sits, and the grid transmission. **Suggest reflectron voltages** sets first-order energy focusing for the reference ion, counted from the source's space focus (shown under the button).
 * **Detector:** its size, where it sits along z (by default where the reference ion lands), timing jitter and digitizer bin.
@@ -474,7 +473,7 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 **OA-TOF, not modelled yet**
 * Ideal grids: no field penetration through the meshes, no fringe fields at the plate edges, no grid scattering. Gridless reflectrons need a real field solve (the Device builder can do the field; flying a pulsed vacuum TOF there is the next step).
 * No space charge in the pushed packet, no metastable decay, no detector dead time or saturation.
-* The beam in the pusher is generated from its size and divergence. Taking it from an upstream stage (a quad or collision cell exit) comes with the stage-to-stage ion handoff.
+* The beam in the pusher is generated from its size and divergence, which can be measured from an upstream model's exit ions (Stages). Between that exit and the pusher the ions only gain the DC step you set: no collisions, no transfer optics, no time structure from the upstream run. Ions leaving a gas-filled stage are taken as they leave it.
 
 **Next: drag-field quadrupole (collision cell).** The integrator already has the three hooks this needs:
 
@@ -514,7 +513,8 @@ ION-SIM/
 │   ├── drivers.py          # electronics: outputs, RF, TWAVE gates, excitation tones, library
 │   ├── heating.py          # effective / internal ion temperature, fragmentation estimate
 │   ├── tof.py              # OA-TOF: pusher pulse, reflectron, exact gap-by-gap flight, resolution
-│   └── gui/                # PySide6 app: workspace.py (model tree, view, settings), one controller per device
+│   ├── stages.py           # stages: one model's exit ions become the next model's beam
+│   └── gui/                # PySide6 app: workspace.py (model tree beside each device), one controller per device
 │                           #   (the *_tab.py files, also the classic tabbed window), shared widgets,
 │                           #   device_tab.py and electrode_view.py (clickable electrodes),
 │                           #   drivers_tab.py, tof_tab.py, heating_view.py, ion_table.py (ion mixtures)

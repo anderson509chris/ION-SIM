@@ -62,6 +62,7 @@ class FlightResult:
     final_pos: np.ndarray
     traj_t: np.ndarray = None
     traj: np.ndarray = None   # (n_samples, n_record, 3), NaN after an ion stops
+    final_vel: np.ndarray = None  # (N,3) m/s where each ion stopped
     heat: object = None           # heating.HeatResult when ion heating was tracked
     species: np.ndarray = None    # species index of each ion (ion mixtures)
     space_charge: object = None   # spacecharge.SpaceCharge used for this flight, if any
@@ -143,7 +144,7 @@ def fly(field, ions, dt, t_max, z_end, temp_k=300.0, gas_velocity=0.0, record=0,
             traj.append(snap); traj_t.append(t)
         if progress and step % 200 == 0 and progress(max(t / t_max, np.mean(status > 0))):
             break
-    res = FlightResult(status, t_end, pos)
+    res = FlightResult(status, t_end, pos, final_vel=vel)
     if heat is not None:
         res.heat = heat.result()
     if len(rec):

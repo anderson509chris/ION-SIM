@@ -10,6 +10,7 @@ from ..fields import GridField2D, IdealQuadField, rf_dc
 from ..ions import make_beam, IonSpecies, expand
 from ..integrator import Simulation
 from .. import mathieu
+from ..stages import ExitIons
 from .common import ParamForm, SimTab
 from .driver_store import get_store
 from .ion_table import IonTable, path_style, fate_caption, species_legend, species_stats, species_color
@@ -442,6 +443,8 @@ class QuadTab(SimTab):
             self.last_table = (["ion", "species", "mz", "z", "status(1=through,2=hit)", "t_end_s", "x_m", "y_m", "z_m"],
                                [[k, species[res.species[k]].name, species[res.species[k]].mz, species[res.species[k]].z,
                                  int(res.status[k]), res.t_end[k], *res.final_pos[k]] for k in range(len(res.status))])
+            self.set_exit(ExitIons.from_result(f"quadrupole run at U = {out['U']:.2f} V, V = {out['V']:.2f} V",
+                                               res, species))
             self._draw_traj(out)
             self._draw_stability([(q, a) for a, q in out["aq"]], labels=[sp.name for sp in species])
         else:

@@ -1,14 +1,15 @@
-"""The Ion Sim workspace: one window with a model tree, a view and a settings panel.
+"""The Ion Sim workspace: one window with a model tree beside the device it is set to.
 
-Each model is one of the device simulations (quadrupole, funnel, OA-TOF, ...). The model
-keeps its own controller (the device's SimTab), whose setting groups, plots, run controls
-and results text are laid out here instead of in a tab:
+Each model is one of the device simulations (quadrupole, funnel, OA-TOF, ...) and keeps the
+look of its tab: the settings in one column with Run, Stop and progress under it, the plots
+beside it and the results text under the plots. The tree on the left lists every model:
 
-    tree (left)        Global definitions > Drivers; then per model: Geometry,
-                       Electrodes and drive, Gas, Ions, Study, Results
-    view (centre)      the selected model's plots (one per Results node), or the Drivers editor
-    settings (right)   the setting groups of the selected tree node
-    run bar (bottom)   Run / Stop / progress and the results text of the selected model
+    Global definitions > Drivers     the electronics, shared by every model
+    each model                       Geometry, Electrodes and drive, Gas, Ions, Study (picking one
+                                     scrolls the settings to it), Results (picking one shows that plot)
+
+Models are stages: an OA-TOF can take its beam and ion mixture from the ions that left a
+quadrupole, ion funnel or Device builder model (Ions > Incoming beam > Ions from).
 """
 import re
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -49,6 +50,7 @@ _RULES = [
 # the plot to bring forward when a settings category is picked (the first one the model has)
 VIEW_FOR = {"Geometry": ("Geometry", "Layout", "Cross-section", "TW field", "Gas flow"),
             "Electrodes and drive": ("Geometry", "Layout", "Potential", "Potentials", "Waveform", "TW field")}
+SOURCES = (QuadTab, FunnelTab, DeviceTab)
 ROLE_KIND, ROLE_MODEL, ROLE_KEY = QtCore.Qt.UserRole, QtCore.Qt.UserRole + 1, QtCore.Qt.UserRole + 2
 
 
@@ -68,7 +70,8 @@ def short_title(title):
 
 
 class Model:
-    """One device simulation in the workspace: its controller and where its pieces went."""
+    """One device simulation in the workspace: its controller (the device's tab, shown whole)
+    and its setting groups, sorted into the tree's categories."""
 
     def __init__(self, name, template):
         self.name, self.template = name, template
@@ -81,29 +84,34 @@ class Model:
                 continue
             title = w.title() if isinstance(w, QtWidgets.QGroupBox) else ""
             self.groups.append((category_of(title) if title else "Electrodes and drive", title or "Settings", w))
-        self.pages = {}             # category -> (scroll area, page widget)
         self.plots = self.ctl.plots
-        self.plots.tabBar().hide()
-        self.plots.setDocumentMode(True)
-        # run controls and results text move to the run bar
-        self.bar = QtWidgets.QWidget()
-        h = QtWidgets.QHBoxLayout(self.bar); h.setContentsMargins(0, 0, 0, 0)
-        c = self.ctl
-        c.run_btn.setMinimumWidth(110); c.stop_btn.setMinimumWidth(80)
-        h.addWidget(c.run_btn); h.addWidget(c.stop_btn); h.addWidget(c.bar, 1); h.addWidget(c.status, 2)
-        self.log = c.results
+        self._fitted = False
 
-    def page(self, cat):
-        if cat not in self.pages:
-            page = QtWidgets.QWidget()
-            v = QtWidgets.QVBoxLayout(page)
-            for gc, _, w in self.groups:
-                if gc == cat:
-                    v.addWidget(w)
-            v.addStretch(1)
-            sa = QtWidgets.QScrollArea(); sa.setWidgetResizable(True); sa.setWidget(page)
-            self.pages[cat] = (sa, page)
-        return self.pages[cat]
+    def fit(self):
+        """Give the settings column the width its groups need, so nothing is clipped (once, when first shown)."""
+        split = self.ctl.layout().itemAt(0).widget()
+        if self._fitted or not split.isVisible():
+            return
+        self._fitted = True
+        sa = self.ctl.scroll
+        need = sa.widget().minimumSizeHint().width() + sa.verticalScrollBar().sizeHint().width() + 2 * sa.frameWidth() + 6
+        sizes = split.sizes()
+        col = max(380, min(need, 640))
+        split.setSizes([col, max(sum(sizes) - col, 300)])
+
+    @property
+    def is_source(self):
+        """Its runs leave exit ions that a later stage can take."""
+        return isinstance(self.ctl, SOURCES)
+
+    @property
+    def is_stage(self):
+        """It can take its ions from another model."""
+        return isinstance(self.ctl, TofTab)
+
+    def scroll_to(self, w):
+        sa = self.ctl.scroll
+        QtCore.QTimer.singleShot(0, lambda: sa.verticalScrollBar().setValue(max(w.y() - 6, 0)))
 
 
 class _VisWatch(QtCore.QObject):
@@ -123,8 +131,8 @@ class _VisWatch(QtCore.QObject):
 
 class Workspace(QtWidgets.QMainWindow):
     def __init__(self, models=None, persist=True):
-        """models: [(template, name or None)] to open; None reopens the last session's models.
-        persist: remember the open models for next time (off for tests and screenshots)."""
+        """models: [(template, name or None)] or [(template, name, ions from)] to open; None reopens the
+        last session's models. persist: remember the open models for next time (off for tests and screenshots)."""
         super().__init__()
         self.persist = persist
         self.setWindowTitle(APP_NAME)
@@ -132,10 +140,11 @@ class Workspace(QtWidgets.QMainWindow):
         self.models = []
         self.settings = QtCore.QSettings("IonSim", "IonSim")
         self._syncing = False
+        self._chain = self._chain_now = None        # Run with the stages before it: models still to run, the one running
 
         # ---- tree ----
         self.tree = QtWidgets.QTreeWidget(); self.tree.setHeaderHidden(True)
-        self.tree.setMinimumWidth(230)
+        self.tree.setMinimumWidth(200)
         self.tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._tree_menu)
         self.tree.currentItemChanged.connect(self._select)
@@ -149,49 +158,28 @@ class Workspace(QtWidgets.QMainWindow):
         self.add_item.setData(0, ROLE_KIND, "add")
         f = self.add_item.font(0); f.setItalic(True); self.add_item.setFont(0, f)
 
-        # ---- centre and right ----
+        # ---- the selected model, laid out as its tab ----
         self.view = QtWidgets.QStackedWidget()
         self.start = self._start_page()
         self.view.addWidget(self.start)
         self.drivers = DriversTab()
         self.view.addWidget(self.drivers)
-        self.props = QtWidgets.QStackedWidget(); self.props.setMinimumWidth(400)
-        self.blank = QtWidgets.QLabel("Pick a node in the model tree to see its settings.")
-        self.blank.setAlignment(QtCore.Qt.AlignCenter); self.blank.setWordWrap(True)
-        self.props.addWidget(self.blank)
-        self.props_title = QtWidgets.QLabel(); self.props_title.setStyleSheet("font-weight: bold; padding: 4px;")
-        right = QtWidgets.QWidget()
-        rv = QtWidgets.QVBoxLayout(right); rv.setContentsMargins(0, 0, 0, 0)
-        rv.addWidget(self.props_title); rv.addWidget(self.props, 1)
-        self.right = right
-
-        # ---- bottom: run bar + log ----
-        self.bars = QtWidgets.QStackedWidget(); self.bars.addWidget(QtWidgets.QWidget())
-        self.logs = QtWidgets.QStackedWidget()
-        empty = QtWidgets.QPlainTextEdit(); empty.setReadOnly(True)
-        empty.setPlaceholderText("Results of the selected model appear here.")
-        self.logs.addWidget(empty)
-        bottom = self.bottom = QtWidgets.QWidget()
-        bv = QtWidgets.QVBoxLayout(bottom); bv.setContentsMargins(4, 2, 4, 2)
-        self.bars.setMaximumHeight(40)
-        bv.addWidget(self.bars); bv.addWidget(self.logs, 1)
-
-        for wdg in (self.view, self.bars, self.logs):    # let the splitter shrink the centre below its pages' hints
-            wdg.setMinimumWidth(360)
-        mid = QtWidgets.QSplitter(QtCore.Qt.Vertical)
-        mid.addWidget(self.view); mid.addWidget(bottom); mid.setSizes([700, 170])
         split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
-        split.addWidget(self.tree); split.addWidget(mid); split.addWidget(right)
-        split.setSizes([240, 820, 440])
+        split.addWidget(self.tree); split.addWidget(self.view)
+        split.setSizes([230, 1270])
         split.setStretchFactor(1, 1)
         self.setCentralWidget(split)
         self._menus()
-        self.statusBar().showMessage("Add a model, set it up from the tree, press Run")
+        self.statusBar().showMessage("Add a model, set it up and press Run")
 
-        names = models if models is not None else (self._saved_models() if persist else [])
-        for tpl, name in names:
+        rows = models if models is not None else (self._saved_models() if persist else [])
+        rows = [tuple(r) + (None,) * (3 - len(r)) for r in rows]
+        for tpl, name, _ in rows:
             if tpl in TEMPLATES:
                 self.add_model(tpl, name, select=False)
+        for m, (_, _, src) in zip(self.models, [r for r in rows if r[0] in TEMPLATES]):
+            if src and m.is_stage:
+                self.link(m, src)
         self.tree.expandItem(self.glob)
         if self.models:
             self.tree.setCurrentItem(self.models[0].root)
@@ -213,6 +201,8 @@ class Workspace(QtWidgets.QMainWindow):
         act = m.addAction("Quit"); act.setShortcut("Ctrl+Q"); act.triggered.connect(self.close)
         r = self.menuBar().addMenu("&Run")
         act = r.addAction("Run selected model"); act.setShortcut("F5"); act.triggered.connect(self.run_current)
+        act = r.addAction("Run with the stages before it"); act.setShortcut("F6")
+        act.triggered.connect(lambda: self.run_chain(self._current_model()))
         act = r.addAction("Stop"); act.setShortcut("Shift+F5"); act.triggered.connect(self.stop_current)
         v = self.menuBar().addMenu("&View")
         v.addAction("Classic tabs window…").triggered.connect(self._classic)
@@ -255,14 +245,15 @@ class Workspace(QtWidgets.QMainWindow):
             pi.setData(0, ROLE_KIND, "plot"); pi.setData(0, ROLE_MODEL, m); pi.setData(0, ROLE_KEY, k)
             m.result_items.append(pi)
         m.results_item = ri
-        self.view.addWidget(m.plots)
-        self.bars.addWidget(m.bar)
-        self.logs.addWidget(m.log)
+        self.view.addWidget(m.ctl)
         m.plots.currentChanged.connect(lambda k, m=m: self._plot_shown(m, k))
-        self.tree.expandItem(root); self.tree.expandItem(ri)
+        m.ctl.ran.connect(lambda ok, m=m: self._ran(m, ok))
+        if m.is_stage:
+            m.ctl.beam_src.currentIndexChanged.connect(lambda _=0, m=m: self._stage_changed(m))
+        self.tree.expandItem(root)
         for ci in m.items.values():
             self.tree.expandItem(ci)
-        self._save_models()
+        self._relink()
         if select:
             self.tree.setCurrentItem(root)
         return m
@@ -277,12 +268,9 @@ class Workspace(QtWidgets.QMainWindow):
         if m.ctl._thread is not None:
             m.ctl._thread.quit(); m.ctl._thread.wait(3000)
         self.tree.takeTopLevelItem(self.tree.indexOfTopLevelItem(m.root))
-        for w in (m.plots, m.bar, m.log):
-            w.setParent(None)
-        for sa, _ in m.pages.values():
-            self.props.removeWidget(sa); sa.setParent(None)
+        self.view.removeWidget(m.ctl); m.ctl.setParent(None)
         self.models.remove(m)
-        self._save_models()
+        self._relink()
         self.tree.setCurrentItem(self.models[-1].root if self.models else self.add_item)
 
     def _rename(self, m):
@@ -291,21 +279,91 @@ class Workspace(QtWidgets.QMainWindow):
         new, ok = QtWidgets.QInputDialog.getText(self, "Rename model", "Name", text=m.name)
         new = new.strip()
         if ok and new and not any(x.name == new for x in self.models if x is not m):
-            m.name = new; m.root.setText(0, new)
-            self._save_models()
+            old = m.name
+            m.name = new
+            self._relink(renamed=(old, new))
 
     def _saved_models(self):
         raw = self.settings.value("workspace/models", "")
         out = []
         for line in str(raw).split("\n"):
             if "\t" in line:
-                tpl, name = line.split("\t", 1)
-                out.append((tpl, name))
+                parts = line.split("\t")
+                out.append((parts[0], parts[1], parts[2] if len(parts) > 2 and parts[2] else None))
         return out
 
     def _save_models(self):
         if self.persist:
-            self.settings.setValue("workspace/models", "\n".join(f"{m.template}\t{m.name}" for m in self.models))
+            self.settings.setValue("workspace/models", "\n".join(
+                f"{m.template}\t{m.name}\t{(m.ctl.source_name() or '') if m.is_stage else ''}" for m in self.models))
+
+    # ---------- stages ----------
+    def link(self, stage, source):
+        """Make `stage` (an OA-TOF model) take its ions from the model named `source`; None sets them by hand."""
+        cb = stage.ctl.beam_src
+        cb.setCurrentIndex(max(cb.findText(f"{source} exit"), 0) if source else 0)
+
+    def source_of(self, m):
+        name = m.ctl.source_name() if m is not None and m.is_stage else None
+        return next((x for x in self.models if x.name == name), None)
+
+    def _relink(self, renamed=None):
+        """Offer every source model to every stage, keeping their links across renames and removals."""
+        for m in self.models:
+            if not m.is_stage:
+                continue
+            keep = m.ctl.source_name()
+            if renamed and keep == renamed[0]:
+                keep = renamed[1]
+            m.ctl.beam_src.blockSignals(True)
+            m.ctl.set_sources({x.name: x.ctl for x in self.models if x.is_source})
+            m.ctl.beam_src.blockSignals(False)
+            self.link(m, keep)
+        for m in self.models:
+            self._label(m)
+        self._save_models()
+
+    def _stage_changed(self, m):
+        self._label(m)
+        self._save_models()
+
+    def _label(self, m):
+        src = self.source_of(m)
+        m.root.setText(0, f"{m.name}  ← {src.name}" if src else m.name)
+        m.root.setToolTip(0, TEMPLATES[m.template][1] + (f"\nIons from the exit of '{src.name}'" if src else ""))
+
+    def run_chain(self, m):
+        """Run the models this one takes its ions from, in order, then this one."""
+        if m is None:
+            return
+        chain, x = [m], self.source_of(m)
+        while x is not None and x not in chain:
+            chain.insert(0, x); x = self.source_of(x)
+        if len(chain) > 1:
+            self.statusBar().showMessage("Running " + " → ".join(c.name for c in chain), 8000)
+        self._chain = chain
+        self._next_in_chain()
+
+    def _next_in_chain(self):
+        if not self._chain:
+            self._chain = self._chain_now = None
+            return
+        m = self._chain_now = self._chain.pop(0)
+        if m.ctl._thread is not None:              # already running: the next one starts when it ends
+            return
+        m.ctl.run_btn.click()
+        if m.ctl._thread is None:                  # the run did not start (an input error): stop the chain
+            self._chain = self._chain_now = None
+            self.statusBar().showMessage(f"'{m.name}' did not start (see its results box); the stages after it were not run", 8000)
+
+    def _ran(self, m, ok):
+        if self._chain is None or m is not self._chain_now:
+            return
+        if not ok:
+            self._chain = self._chain_now = None
+            self.statusBar().showMessage(f"'{m.name}' failed; the stages after it were not run", 8000)
+            return
+        self._next_in_chain()
 
     # ---------- selection ----------
     def _current_model(self):
@@ -317,62 +375,37 @@ class Workspace(QtWidgets.QMainWindow):
             return
         kind = item.data(0, ROLE_KIND)
         m = item.data(0, ROLE_MODEL)
-        if kind in ("add", "global", "drivers"):            # full-width pages: no settings panel or run bar
+        if kind in ("add", "global", "drivers"):
             self.view.setCurrentWidget(self.start if kind == "add" else self.drivers)
-            self.right.hide(); self.bottom.hide()
             return
-        self.right.show(); self.bottom.show()
-        self.view.setCurrentWidget(m.plots)
-        self.bars.setCurrentWidget(m.bar); self.logs.setCurrentWidget(m.log)
+        self.view.setCurrentWidget(m.ctl)
         for other in self.models:                   # keep the tree short: only this model open
             if other is not m:
                 other.root.setExpanded(False)
         m.root.setExpanded(True)
+        QtCore.QTimer.singleShot(0, m.fit)        # once it is laid out
         if kind == "plot":
             self._syncing = True
             m.plots.setCurrentIndex(item.data(0, ROLE_KEY))
             self._syncing = False
-            self._show_props(m, self._last_cat(m))
         elif kind in ("cat", "group"):
             cat = item.data(0, ROLE_KEY)
-            m.last_cat = cat
-            self._show_props(m, cat)
+            if kind == "group":
+                wid = item.data(0, QtCore.Qt.UserRole + 3)
+                w = next(w for _, _, w in m.groups if id(w) == wid)
+            else:
+                w = next((w for c, _, w in m.groups if c == cat and not w.isHidden()), None)
+            if w is not None:
+                m.scroll_to(w)
             names = list(m.plots.figs)
             pick = next((n for n in VIEW_FOR.get(cat, ()) if n in names), None)
             if pick is not None:
                 self._syncing = True
                 m.plots.setCurrentIndex(names.index(pick))
                 self._syncing = False
-            if kind == "group":
-                wid = item.data(0, QtCore.Qt.UserRole + 3)
-                for _, _, w in m.groups:
-                    if id(w) == wid:
-                        QtCore.QTimer.singleShot(0, lambda w=w, sa=m.pages[cat][0]: sa.verticalScrollBar().setValue(w.y()))
-        else:                               # model root or Results
-            self._show_props(m, self._last_cat(m))
-
-    def _last_cat(self, m):
-        return getattr(m, "last_cat", None) or next(iter(m.items), None)
-
-    def _show_props(self, m, cat, text=None):
-        if m is None or cat is None:
-            self.blank.setText(text or "Pick a node in the model tree to see its settings.")
-            self.props.setCurrentWidget(self.blank); self.props_title.setText("")
-            return
-        sa, page = m.page(cat)
-        if self.props.indexOf(sa) < 0:
-            self.props.addWidget(sa)
-        need = page.minimumSizeHint().width() + sa.verticalScrollBar().sizeHint().width() + 4
-        sp = self.centralWidget()                     # fit the settings panel to the page: never clip it
-        sizes = sp.sizes()
-        grow = max(440, need) - sizes[2]
-        if grow and sizes[1] - grow >= 360:
-            sp.setSizes([sizes[0], sizes[1] - grow, sizes[2] + grow])
-        self.props.setCurrentWidget(sa)
-        self.props_title.setText(f"{m.name}  ›  {cat}")
 
     def _plot_shown(self, m, k):
-        """A run brought a plot to the front: select its Results node."""
+        """A plot tab was picked, or a run brought a plot to the front: select its Results node."""
         if self._syncing or not 0 <= k < len(m.result_items):
             return
         if self._current_model() is m:
@@ -390,6 +423,14 @@ class Workspace(QtWidgets.QMainWindow):
         m = item.data(0, ROLE_MODEL) if item is not None else None
         if m is not None:
             menu.addAction(f"Run '{m.name}'").triggered.connect(m.ctl.run_btn.click)
+            if self.source_of(m) is not None:
+                menu.addAction("Run with the stages before it").triggered.connect(lambda: self.run_chain(m))
+            if m.is_stage:
+                take = menu.addMenu("Take ions from")
+                for x in [None] + [x for x in self.models if x.is_source]:
+                    a = take.addAction("Set by hand" if x is None else x.name)
+                    a.setCheckable(True); a.setChecked(self.source_of(m) is x)
+                    a.triggered.connect(lambda _=False, x=x: self.link(m, x.name if x else None))
             menu.addAction("Rename…").triggered.connect(lambda: self._rename(m))
             menu.addAction("Remove").triggered.connect(lambda: self._remove(m))
             menu.addSeparator()
@@ -407,7 +448,9 @@ class Workspace(QtWidgets.QMainWindow):
         title.setStyleSheet("font-size: 20px; font-weight: bold;")
         v.addWidget(title)
         sub = QtWidgets.QLabel("Each model is one device. Several models can sit in the workspace side by side; "
-                               "the Drivers under Global definitions are shared by all of them.")
+                               "the Drivers under Global definitions are shared by all of them. An OA-TOF can take "
+                               "its ions from a quadrupole, ion funnel or Device builder model, so models can be "
+                               "chained into stages of one instrument.")
         sub.setWordWrap(True); v.addWidget(sub); v.addSpacing(12)
         grid = QtWidgets.QGridLayout()
         for i, (tpl, (_, desc)) in enumerate(TEMPLATES.items()):
@@ -427,6 +470,7 @@ class Workspace(QtWidgets.QMainWindow):
             m.ctl.run_btn.click()
 
     def stop_current(self):
+        self._chain = self._chain_now = None
         m = self._current_model()
         if m is not None:
             m.ctl.stop()
@@ -464,8 +508,10 @@ class Workspace(QtWidgets.QMainWindow):
         from .app import VERSION
         QtWidgets.QMessageBox.about(self, APP_NAME,
             f"<b>{APP_NAME} {VERSION}</b><p>Ion optics and ion mobility simulator.</p>"
-            "<p>Add a model for each device, set it up from the model tree on the left, and press Run (F5). "
+            "<p>Add a model for each device, pick it in the model tree on the left, set it up and press Run (F5). "
             "Drivers under Global definitions are shared by every model.</p>"
+            "<p>An OA-TOF can take its ions from another model (Incoming beam &gt; Ions from); "
+            "Run &gt; Run with the stages before it (F6) runs the chain in order.</p>"
             "<p>The previous one-tab-per-device window is under View &gt; Classic tabs window.</p>")
 
     def closeEvent(self, e):

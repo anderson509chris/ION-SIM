@@ -10,6 +10,7 @@ from ..funnel import RingFunnel, PlanarFunnel, CadFunnel, FunnelElectrics, run_f
 from ..laplace import Drive
 from ..cad import load_bodies, FILE_FILTER, UNITS
 from ..twave import mobility
+from ..stages import ExitIons
 from .common import ParamForm, SimTab
 from .electrode_view import ElectrodeView, INSULATOR
 from .heating_view import HeatingBox, draw_heating
@@ -548,6 +549,8 @@ class FunnelTab(SimTab):
                             f"{np.sqrt(np.mean(np.sum((res.final_pos[tr, :2] - out['start']) ** 2, 1))) / MM:.3f} mm" if tr.any() else ""))
                 if res.heat is not None:
                     self.log(f"  Heating {d['name']}: " + res.heat.summary(d["mask"] & (st >= 0)))
+            self.set_exit(ExitIons.from_result(f"funnel run at {out['gas']['p']:g} Torr", res, species,
+                                               out["start"], out["gas"]["p"], out["gas"]["T"]))
             self._draw_traj(out)
             self._draw_exit(out)
             names = ", ".join(s.name for s in species)
