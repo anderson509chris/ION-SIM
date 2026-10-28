@@ -17,7 +17,7 @@ Ion Sim solves electrode fields on a grid, flies thousands of ions through them,
 * **Ion funnel:** the PNNL stacked-ring funnel (copper rings on FR4 PCBs), a planar two-board funnel, or **your own electrodes imported from STEP, STL or OBJ**, with RF + DC fields and ion flight through 1–10 Torr gas. PCB dielectric, a computed **gas flow field** and the beam's **space charge** are included.
 * **OA-TOF:** an orthogonal-acceleration time-of-flight analyser: the beam in the pusher, the pusher and puller pulse (with real rise times), acceleration, drift, a single- or two-stage reflectron (or linear) and the detector. Arrival times, mass spectra, resolution, what limits the peak width, where ions land on the detector, duty cycle, scans of any setting and an automatic reflectron tune.
 * **Device builder:** load a **DXF** drawing or a **STEP / STL / OBJ** model, click each electrode to see and set its DC, RF and TWAVE phase (colored by voltage), apply a DC gradient or an 8-phase TWAVE pattern across many pads at once, then solve and fly ions. Works for flat boards (TWAVE), ring stacks drawn as a profile, rod sets, and full 3D parts.
-* **Drivers:** build your electronics once (a TWAVE/RF combiner with 16 outputs, a quad RF supply with 8 excitation tones, a TOF pusher and puller, an RF pair, DC channels) and wire their outputs to electrodes in the Quadrupole, OA-TOF and Device builder tabs. Each output can carry DC, RF, a TWAVE phase with real edge rise times, any number of excitation tones, and a pulse.
+* **Drivers:** build your electronics once (a TWAVE/RF combiner with 16 outputs, a quad RF supply with 8 excitation tones, a TOF pusher and puller, an RF pair, DC channels) and wire their outputs to electrodes in the Quadrupole, OA-TOF and Device builder tabs. Each output can carry DC, RF, a TWAVE phase with real edge rise times, any number of excitation tones, a pulse, and an **imported waveform: the output of a SPICE model (ngspice or LTspice) or a trace captured from a Rigol oscilloscope**, so electrodes see what the real circuit puts out, ringing and droop included.
 * **Ion heating:** every gas-phase flight (funnel, Device builder, TWAVE) tracks each ion's effective and internal temperature, the collision energy, where along the device ions get hottest, and optionally how many survive intact (fragmentation / unfolding estimate).
 
 ---
@@ -243,6 +243,27 @@ The right side plots the selected outputs' waveforms and the TWAVE gate sequence
 |---|---|
 | ![Driver waveforms](docs/screenshots/drivers_waveforms.png) | ![TWAVE sequence](docs/screenshots/drivers_twave_sequence.png) |
 
+#### SPICE and scope waveforms
+
+Section **5. Imported waveforms** of a driver brings in a recorded voltage, and the **Waveform** column of an output picks one of them (**Waveform ×** scales it: a probe or amplifier gain, or −1 to flip it). The output's voltage is then its DC, RF, tones, TWAVE and pulse as before **plus** that waveform, so a waveform can be the whole drive (everything else at 0) or ride on top of the rest. It works wherever drivers work: electrodes wired in the **Device builder**, the **Quadrupole** rods, and the **OA-TOF** pusher and puller.
+
+* **SPICE result…** reads a `.raw` file from ngspice or LTspice (binary or ASCII; LTspice's compressed, double, fastaccess and `.step` files too, where you pick the step), or a text export (LTspice *File > Export data as text*, ngspice `wrdata`). Pick the node voltages you want.
+* **Run SPICE netlist…** runs a netlist through **ngspice** (`ngspice -b -r`) or **LTspice** (`LTspice -b`) and reads its result, so a change to the circuit is one click from a new drive. It finds either simulator in its usual install place, or you give the path. The netlist needs a `.tran`. `examples/spice/oa_tof_pusher.cir` is a pusher / puller pulser driving the plates through their wiring inductance, with its result `oa_tof_pusher.raw`.
+* **Scope CSV file…** reads a CSV saved on the scope: Rigol's `X,CH1,Start,Increment` layout, the newer `Time(s),CH1(V)` layout, or any table with a time column (`examples/scope/rigol_pusher_ch1.csv`).
+* **Capture from Rigol scope…** reads channels straight off a Rigol scope (DS1000Z / MSO1000Z, DS2000, MSO5000, DS/MSO7000, DHO800 / 900 / 1000 / 4000) by SCPI. Over **LAN** give the scope's IP address (the scope's *Utility > IO* page; port 5555, nothing to install). Over **USB** press **Find USB / VISA** and pick the `USB0::0x1AB1::…::INSTR` resource (needs `pyvisa` with `pyvisa-py`, or NI-VISA). Take what is on screen, or the **whole acquisition memory** (the scope is stopped first, and long records are read in pieces), optionally after a **single shot**. The scope's own volts and time base are used (probe ratio included), and **Start the drive at the trigger** drops the pre-trigger part.
+
+Long records are averaged down to 20 000 points (you can keep more), and the waveform is saved inside the driver, so `.iondrv` files and setups carry it. Between samples the voltage is interpolated; by default the record **repeats** with its length as the period (set a longer **Period** to hold the last value until the next repeat, or untick Repeat to hold it for good), and **Delay** shifts it later. The **Imported waveforms** plot shows each as imported and which outputs use it.
+
+Because fields add linearly, a waveform costs one more field part per output that carries it, however long the record. The flight time step follows the waveform: about a fifth of its full swing per step on its steepest edge, never finer than its samples. In the Quadrupole, a waveform's DC and its component at the driver's RF frequency count toward U and V for a/q, so an RF made in SPICE still gets its stability point; set the driver's RF frequency to the waveform's. In the OA-TOF, pick the driver under **Pulse from** and its pusher and puller outputs; the flight follows the waveform step by step until every ion is past the drift grid, and the reflectron suggestion uses the settled push (past the overshoot).
+
+| SPICE pusher and puller on the OA-TOF driver (ringing at the edge) | The OA-TOF pushed by them |
+|---|---|
+| ![SPICE waveforms](docs/screenshots/drivers_spice_waveforms.png) | ![TOF from SPICE](docs/screenshots/tof_spice_pusher.png) |
+
+| Capture from a Rigol scope |
+|---|
+| ![Scope capture](docs/screenshots/scope_capture_dialog.png) |
+
 ### Ion heating
 
 The Ion funnel, Device builder and TWAVE tabs have an **Ion heating** box (on by default). For every ion it reports the effective temperature (how hot the gas collisions are), the internal temperature (which lags by the set number of collisions), the mean centre-of-mass collision energy, collisions per ion and, with an activation energy, the fraction left intact. The **Heating** plot shows the mean and hottest-ion temperatures along the ion axis, where ions fragment, and per-ion peaks.
@@ -391,6 +412,7 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 ### Drivers (`ionsim/drivers.py`)
 
 * **Waveform:** each output is V(t) = DC + RF cos(2πf t + φ) + (Tones ×) Σ A_k cos(2πf_k t + φ_k) + A_TW · gate_p(t) + A_pulse · pulse(t). Phase p's gate is high while ((p − step) mod N) < n_on, the step advances every pitch / speed, and each edge ramps linearly over the rise time.
+* **Imported waveforms (`ionsim/waveforms.py`, `ionsim/scope.py`):** a waveform is a sampled record v(t), linearly interpolated and repeated with its period. It adds Waveform × v(t) to its output and one field part per output that carries it, whose weight at time t is v(t). SPICE raw files are read directly (header, then float64 rows for ngspice, float64 time and float32 values for LTspice, absolute value of LTspice's negative compressed times, stepped runs split where time restarts). Rigol captures use `:WAV:PRE?` and `:WAV:DATA?`: volts = (code − y-origin − y-reference) · y-increment, t = (i − x-reference) · x-increment + x-origin.
 * **Field parts:** a device is solved once per distinct component: DC, cos and sin of each frequency in use, and each TWAVE phase of each driver. Outputs that share a component share its solve, so 16 outputs or 8 tones stay cheap. Electrodes not wired to a driver use the device's own RF and TWAVE settings as before.
 * **Quadrupole:** the rods are four separate electrodes, each driven by its output's waveform. For a/q the tab uses U = (DC_x − DC_y)/2 and V = |RF_x − RF_y|/2 (phasors, averaged over each rod pair). Secular frequencies come from the Floquet characteristic exponent β, f = β f_RF / 2, in x from (a, q) and in y from (−a, −q).
 
@@ -470,6 +492,12 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * The example TWAVE board with its 96 pads wired to the 16-output combiner (RF off on the pads) transmits 97% at 14.1 m/s, the same as with the board's own TWAVE settings (97%, 14.3 m/s).
 * Quadrupole tone excitation (r0 = 4 mm, 300 V RF at 1 MHz, U = 0, m/z 500 at q = 0.37): a 15 V tone added to the RF at twice the secular frequency (263 kHz) ejects m/z 461–550, with two weaker side resonances near m/z 214 and 271; everything else stable passes at 100%. A 1 V dipolar tone at the secular frequency (131 kHz) ejects m/z 500 when on resonance and lets it through 3% off resonance, the expected narrow dipolar line.
 
+**SPICE and scope waveforms**
+* ngspice binary and ASCII raw, ngspice `wrdata`, and LTspice raw files (UTF-16 header, float32 values, compressed times, fastaccess, two `.step` runs) read back the values written to 1e-6 (smoke test).
+* A quadrupole whose RF comes from a sampled 1 MHz cosine on an imported waveform flies the same ion paths as the driver's own RF, to better than 0.01 µm.
+* OA-TOF: the ideal 10 ns pulse given as a pusher and puller waveform reproduces the analytic flight times to 1.4e-7. The SPICE pusher in `examples/spice` (15 Ω pulser, 150 nH wiring, 40 pF plate: about 30 % overshoot ringing at ~65 MHz) gives m/z 500 a resolution of about 15 600 against 15 900 for the ideal pulse in the same run.
+* Scope capture against a simulated Rigol on a local socket: screen and 600 000-point memory reads (in 250 000-point pieces), 8-bit BYTE and 12-bit DHO WORD formats, volts within half a code step.
+
 **Ion heating**
 * DC drift field (4 Torr N₂, m/z 500, K0 = 1): T_eff 301.9 K vs 302.0 K from theory at 20 V/cm, and 494 K vs 496 K at 200 V/cm.
 * Uniform RF field (2 Torr, 50 V/cm, 1 MHz, ωτ = 1.4): time-averaged T_eff 308.53 K vs 308.59 K from the damped-oscillator result.
@@ -519,6 +547,10 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * No space charge in the pushed packet, no metastable decay, no detector dead time or saturation.
 * The beam in the pusher is generated from its size and divergence, which can be measured from an upstream model's exit ions (Stages). Between that exit and the pusher the ions only gain the DC step you set: no collisions, no transfer optics, no time structure from the upstream run. Ions leaving a gas-filled stage are taken as they leave it.
 
+**Imported waveforms, not modelled yet**
+* A waveform is a voltage, not a source: the electrodes don't load the circuit back (put the electrode capacitance in the SPICE model, as the example does). AC and noise analyses can't drive anything; use a `.tran`.
+* The scope's probe and bandwidth are part of what it captured. Capture is from Rigol scopes only, and one channel at a time is read with no averaging across shots (average on the scope).
+
 **Stages, not modelled yet**
 * Between two stages ions only gain the DC step you set: no transfer optics, no collisions in the gap, and no time structure (a quadrupole gives each arriving ion a new RF phase; the OA-TOF uses a continuous beam).
 * The ESI inlet hands on its gas (pressure, throughput) and ion species, not ion positions: the inlet model is 1D, and in a 1–2 Torr funnel the ions forget their skimmer speed within microseconds.
@@ -551,6 +583,8 @@ ION-SIM/
 │   ├── dxf.py              # DXF reader: closed shapes, holes, layers, units
 │   ├── device.py           # device builder: electrodes, patterns, grids, solve, flight
 │   ├── drivers.py          # electronics: outputs, RF, TWAVE gates, excitation tones, library
+│   ├── waveforms.py        # imported drive waveforms: SPICE raw / text results, running ngspice or LTspice
+│   ├── scope.py            # Rigol oscilloscope capture over LAN (SCPI socket) or USB (VISA)
 │   ├── heating.py          # effective / internal ion temperature, fragmentation estimate
 │   ├── tof.py              # OA-TOF: pusher pulse, reflectron, exact gap-by-gap flight, resolution
 │   ├── stages.py           # stages: one model's exit ions (or the inlet's gas) start the next model
@@ -559,12 +593,15 @@ ION-SIM/
 │                           # (whole-instrument CAD, parts tagged as stages), one controller per device
 │                           #   (the *_tab.py files, also the classic tabbed window), shared widgets,
 │                           #   device_tab.py and electrode_view.py (clickable electrodes),
-│                           #   drivers_tab.py, tof_tab.py, heating_view.py, ion_table.py (ion mixtures),
+│                           #   drivers_tab.py, waveform_import.py (SPICE and scope dialogs), tof_tab.py,
+│                           #   heating_view.py, ion_table.py (ion mixtures),
 │                           #   traj3d.py (3D ion paths with the electrodes), flow_movie.py (moving inlet
 │                           #   picture), speeds.py (gas and ion speeds along the instrument)
 ├── examples/               # one demo per device; geometry/ has example STEP, DXF and .ionsim setups,
-│                           #   drivers/ has example .iondrv drivers
+│                           #   drivers/ has example .iondrv drivers, spice/ a pusher pulser netlist and its
+│                           #   result, scope/ a Rigol CSV capture
 ├── tests/smoke_test.py     # quick end-to-end check of imports, solves and the app window
+│                           #   (fake_rigol.py: a pretend Rigol scope on a local socket for the capture check)
 ├── out/                    # example plots
 ├── docs/                   # screenshots and the script that makes them
 ├── build.sh, build_windows.bat, ion_sim.spec   # standalone builds

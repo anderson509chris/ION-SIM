@@ -207,9 +207,11 @@ class TofTab(SimTab):
         pulse = T.Pulse(rise=p["rise"] * 1e-9, fall=p["fall"] * 1e-9, width=p["width"] * 1e-6, rate=p["rate"] * 1e3,
                         shape=SHAPES[self.shape.currentText()])
         drv = self._driver()
+        waves = (None, None)
         if drv is not None:
             pulse = T.Pulse.from_driver(drv)
-        tof = T.OATof(push_gap=p["gp"] * 1e-3, accel_gap=p["ga"] * 1e-3, v_rest=p["rest"], v_rest_pull=p["rest_pull"],
+            waves = (drv.wave_of(self.out_push.currentText()), drv.wave_of(self.out_pull.currentText()))
+        tof = T.OATof(push_wave=waves[0], pull_wave=waves[1], push_gap=p["gp"] * 1e-3, accel_gap=p["ga"] * 1e-3, v_rest=p["rest"], v_rest_pull=p["rest_pull"],
                       v_push=p["push"], v_pull=p["pull"], v_drift=p["drift"], pulse=pulse,
                       drift_length=t["L"] * 1e-3, reflectron=FLIGHT[self.flight.currentText()],
                       r1_depth=t["d1"] * 1e-3, v_r1=t["v1"], r2_depth=t["d2"] * 1e-3, v_r2=t["v2"],
@@ -278,7 +280,7 @@ class TofTab(SimTab):
         cur = self.src.currentText()
         self.src.blockSignals(True)
         self.src.clear(); self.src.addItem(MANUAL)
-        self.src.addItems([n for n in self.store.names() if self.store.get(n).has_pulse()])
+        self.src.addItems([n for n in self.store.names() if self.store.get(n).has_pulse() or self.store.get(n).has_wave()])
         self.src.setCurrentIndex(max(self.src.findText(cur), 0))
         self.src.blockSignals(False)
         self._src_changed(keep=True)
@@ -394,6 +396,10 @@ class TofTab(SimTab):
         a_all, a_src, a_t = fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[0, 1]), fig.add_subplot(gs[1, :])
         p = tof.pulse
         t_on = p.delay + p._ramp_len(p.rise) + 1e-12
+        if tof.waves():                                     # the moment the imported push is strongest
+            ts = np.linspace(0, max(a for a, b, n in tof.schedule()) or 1e-9, 2000)
+            d = np.array([abs(v[0] - v[1]) for v in (tof.potentials(t) for t in ts)])
+            t_on = float(np.median(ts[d >= 0.9 * d.max()]))     # mid-push, past any overshoot at the edge
         x_src = tof.planes()[2][0] + 0.25 * tof.accel_gap
         for ax, src in ((a_all, False), (a_src, True)):
             for t, lab, c in ((0.0, "between pulses", "0.5"), (t_on, "pulse on", "tab:blue")):
@@ -408,14 +414,19 @@ class TofTab(SimTab):
         a_all.set_title("Potential along the flight axis (ideal grids)", fontsize=9)
         a_src.set_title("Pusher and acceleration", fontsize=9)
         r = max(p._ramp_len(p.rise), 1e-9)
-        tt = np.linspace(p.delay - 0.5 * r, p.delay + 3 * r, 600)
-        pull = tof.v_rest if tof.v_rest_pull is None else tof.v_rest_pull
-        g = p.level(tt)
-        a_t.plot(tt * 1e9, tof.v_rest + tof.v_push * g, label="pusher plate")
-        a_t.plot(tt * 1e9, pull + tof.v_pull * g, label="puller grid")
+        if tof.waves():                                     # imported pusher / puller waveforms: show the whole push
+            t_w = max(a for a, b, n in tof.schedule())
+            tt = np.linspace(0, max(t_w, 1e-9), 2000)
+            title = "Pusher and puller from imported waveforms: " + ", ".join(w[0].name for w in tof.waves())
+        else:
+            tt = np.linspace(p.delay - 0.5 * r, p.delay + 3 * r, 600)
+            title = (f"Pulse edge: {p.rise * 1e9:g} ns 10-90 % ({p.shape}), width {p.width * 1e6:g} µs, "
+                     f"{p.rate / 1e3:g} kHz")
+        pv = np.array([tof.potentials(t)[:2] for t in tt])
+        a_t.plot(tt * 1e9, pv[:, 0], label="pusher plate")
+        a_t.plot(tt * 1e9, pv[:, 1], label="puller grid")
         a_t.set_xlabel("time (ns)"); a_t.set_ylabel("V"); a_t.legend(fontsize=7)
-        a_t.set_title(f"Pulse edge: {p.rise * 1e9:g} ns 10-90 % ({p.shape}), width {p.width * 1e6:g} µs, "
-                      f"{p.rate / 1e3:g} kHz", fontsize=9)
+        a_t.set_title(title, fontsize=9)
         self.plots.draw("Potentials")
 
     # ---------- run ----------

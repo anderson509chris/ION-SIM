@@ -1,7 +1,7 @@
 """Quick end-to-end check that an install works (about a minute). Run:
     python tests/smoke_test.py          (set QT_QPA_PLATFORM=offscreen on a headless machine)
 Exits non-zero with a message if anything is broken."""
-import os, sys, time, tempfile
+import os, sys, time, tempfile, json
 import numpy as np
 
 os.environ.setdefault("IONSIM_DRIVERS", os.path.join(tempfile.mkdtemp(), "drivers.json"))   # keep the user's driver library untouched
@@ -193,12 +193,134 @@ lv = pz.pulse_spec().level(np.array([0.0, 1e-6, 1 / pz.pulse_rate + 1e-6]))
 check("driver pulse", any(m[0] == "pulse" for m in meta.values()) and list(lv) == [0.0, 1.0, 1.0],
       f"parts {list(parts)}")
 
+# imported waveforms: a SPICE result (ngspice binary raw) ...
+from ionsim import waveforms as WF
+from ionsim.drivers import Driver, Output
+SP = os.path.join(ROOT, "examples", "spice")
+spice = WF.spice_traces(os.path.join(SP, "oa_tof_pusher.raw"))
+push = spice["v(push)"]
+check("SPICE raw (ngspice)", set(spice) == {"v(push)", "v(pull)"} and abs(push.level(4e-6) - 600) < 5,
+      f"{push}, {push.level(4e-6):.1f} V on the flat top")
+# ... an LTspice raw file: UTF-16 header, float32 values, compressed (negative) times, two .step runs ...
+def ltspice_raw(path, t, cols, fast=False):
+    names = ["time"] + list(cols)
+    hdr = ("Title: * test.asc\nDate: today\nPlotname: Transient Analysis\n"
+           f"Flags: real forward stepped{' fastaccess' if fast else ''}\nNo. Variables: {len(names)}\n"
+           f"No. Points: {len(t)}\nOffset:   0.0000000000000000e+000\nCommand: Linear Technology Corporation LTspice XVII\n"
+           "Variables:\n" + "".join(f"\t{k}\t{n}\t{'time' if k == 0 else 'voltage'}\n" for k, n in enumerate(names)) + "Binary:\n")
+    tt = np.array(t, "<f8"); tt[3::4] *= -1                      # compressed points carry a negative time
+    vals = [np.asarray(c, "<f4") for c in cols.values()]
+    if fast:
+        body = tt.tobytes() + b"".join(v.tobytes() for v in vals)
+    else:
+        rec = np.zeros(len(t), [("t", "<f8")] + [(f"v{k}", "<f4") for k in range(len(vals))])
+        rec["t"] = tt
+        for k, v in enumerate(vals):
+            rec[f"v{k}"] = v
+        body = rec.tobytes()
+    with open(path, "wb") as f:
+        f.write(hdr.encode("utf-16-le") + body)
+tl = np.linspace(0, 1e-6, 201)
+t2 = np.r_[tl, tl]                                             # two stepped runs back to back
+lt_ok = []
+for fast in (False, True):
+    fn = os.path.join(tempfile.mkdtemp(), "lt.raw")
+    ltspice_raw(fn, t2, {"V(out)": np.r_[np.sin(2e7 * tl), 2 * np.sin(2e7 * tl)], "V(n001)": np.r_[tl * 0 + 1, tl * 0 + 2]}, fast)
+    r1, r2 = WF.read_raw(fn), WF.read_raw(fn, step=1)
+    lt_ok.append(WF.raw_steps(fn) == 2 and np.allclose(r1["V(out)"][1], np.sin(2e7 * tl), atol=1e-6)
+                 and np.allclose(r2["V(out)"][1], 2 * np.sin(2e7 * tl), atol=1e-6) and np.all(np.diff(r1["V(out)"][0]) > 0))
+check("SPICE raw (LTspice)", all(lt_ok), "float32, compressed, fastaccess, 2 steps")
+# ... running ngspice itself, when it is installed
+if WF.find_simulator("ngspice")[1]:
+    run = WF.spice_traces(WF.run_spice(os.path.join(SP, "oa_tof_pusher.cir"), "ngspice"))
+    check("SPICE run (ngspice)", np.allclose(run["v(push)"].level([1e-6, 4e-6]), push.level([1e-6, 4e-6]), atol=1e-3))
+# ... and a Rigol CSV saved on the scope (t = 0 at the trigger)
+sc = WF.read_table(os.path.join(ROOT, "examples", "scope", "rigol_pusher_ch1.csv"))
+tr = WF.Trace("CH1", *sc["CH1"])
+check("scope CSV (Rigol)", abs(tr.t0 + 1.5e-6) < 1e-12 and abs(tr.from_trigger().level(3e-6) - 600) < 20,
+      f"{tr}, trigger {-tr.t0 * 1e6:.2f} µs in")
+
+# live capture from a Rigol scope (a pretend one on a local socket): screen, whole memory in chunks, 16-bit DHO
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from fake_rigol import FakeRigol
+from ionsim.scope import RigolScope, connect
+caps = []
+for model in ("DS1104Z", "DHO1204"):
+    fk = FakeRigol(model, screen=1200, memory=600_000, xinc=1e-10)
+    with RigolScope(connect(f"127.0.0.1:{fk.port}")) as scope:
+        on = scope.channels()
+        a = scope.capture("CHAN1")
+        b = scope.capture("CH1", memory=True)
+    want = fk.signal("CHAN1", b.t + b.t0)
+    caps.append((on == ["CHAN1", "CHAN2"] and len(a.t) == 1200 and len(b.t) == 600_000 and
+                 np.max(np.abs(b.v - want)) <= 0.51 * (1600 / (65535 if fk.word else 255)), len(b.t)))
+check("scope capture (Rigol SCPI)", all(c[0] for c in caps), f"{caps[0][1]} points read in chunks, BYTE and WORD")
+
+# a driver output carrying a waveform is one field part, and flies like the same signal made by the driver
+qa = Driver("RF from a trace", rf_freq=1e6, outputs=[Output("A", rf=300.0), Output("B", rf=300.0, rf_phase=180.0)])
+tq = np.linspace(0, 1e-6, 2001)
+qb = Driver("RF as a trace", rf_freq=1e6, outputs=[Output("A", wave="rf", wave_scale=300.0),
+                                                     Output("B", wave="rf", wave_scale=-300.0)])
+qb.add_wave(WF.Trace("rf", tq, np.cos(2 * np.pi * 1e6 * tq)))
+qb = Driver.from_dict(json.loads(json.dumps(qb.to_dict())))   # and it survives the driver library's JSON
+dev = from_drawing(load_dxf(os.path.join(GEO, "quad_rods.dxf")), "planar2d")
+dev.length = 0.1
+A = [e.name for e in dev.electrodes if e.layer == "ROD_A"]
+B = [e.name for e in dev.electrodes if e.layer == "ROD_B"]
+dg = dev.build(dev.default_h("Quick"))
+fins = []
+for drv in (qa, qb):
+    dev.drivers = {}
+    dev.wire_driver(A, drv, "one", "A"); dev.wire_driver(B, drv, "one", "B")
+    fld = DeviceField(dg)
+    r, _ = fly_device(fld, 500, 1.0, 20, 1e-7, energy_ev=5, radius=0.3e-3, z_start=0, z_end=0.1, dt=1 / 1e6 / 40,
+                      rng=np.random.default_rng(0))
+    fins.append((r, list(fld.parts)))
+dpos = np.max(np.abs(fins[0][0].final_pos - fins[1][0].final_pos))
+check("driver waveform part", fins[1][1] == ["dc", "wave@RF as a trace#rf"] and dpos < 2e-6,
+      f"parts {fins[1][1]}, paths agree to {dpos * 1e6:.2f} µm, transmission {fins[1][0].transmission:.0%}")
+
+# the OA-TOF pushed by imported pusher / puller waveforms: the ideal pulse as a trace gives the same flight times,
+# and the SPICE pulse (with its ringing) still flies
+tofi = TOF.OATof()
+tp = np.linspace(0, 20e-6, 20001)
+g = tofi.pulse.level(tp)
+tofw = tofi.copy(v_push=0, v_pull=0, push_wave=(WF.Trace("p", tp, g), tofi.v_push), pull_wave=(WF.Trace("q", tp, g), tofi.v_pull))
+sp1 = [IonSpecies("a", 500, 1, 1, 300)]
+ra, rb = (TOF.fly(x, TOF.Beam(), sp1, rng=np.random.default_rng(1)) for x in (tofi, tofw))
+ok = np.isfinite(ra.t) & np.isfinite(rb.t)
+dt_rel = np.max(np.abs(rb.t[ok] / ra.t[ok] - 1))
+tofs = tofi.copy(v_push=0, v_pull=0, push_wave=(push, 1.0), pull_wave=(spice["v(pull)"], 1.0))
+Rs = TOF.resolution(tofs, TOF.Beam(), [IonSpecies("a", 500, 1, 1, 1000)])
+check("TOF pushed by a waveform", ok.sum() > 250 and dt_rel < 1e-5 and Rs > 1000,
+      f"flight times agree to {dt_rel:.1e}; SPICE pusher resolution {Rs:.0f}")
+
 # the app window builds
 from PySide6 import QtWidgets
 from ionsim.gui.app import MainWindow
 app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
 w = MainWindow()
 check("app window", w.tabs.count() >= 8, f"{w.tabs.count()} tabs")
+
+# Drivers tab: a scope capture through the dialog lands on an output, and the OA-TOF tab picks it up
+from ionsim.gui import waveform_import as WI
+from ionsim.drivers import tof_pulser
+WI.SignalPicker.exec = lambda self: QtWidgets.QDialog.Accepted          # answer the dialogs without showing them
+WI.ScopeDialog.exec = lambda self: QtWidgets.QDialog.Accepted
+dr = w.drivers
+name = dr.store.lib.add(tof_pulser("Scope pusher"), replace=False); dr.store.touch(); dr._fill_list(name)
+fk = FakeRigol("DS1104Z", screen=1200, memory=1200, xinc=5e-9)
+_dlg = WI.ScopeDialog.__init__
+WI.ScopeDialog.__init__ = lambda self, parent=None: (_dlg(self, parent), self.addr.setCurrentText(f"127.0.0.1:{fk.port}"))[0]
+_pick = WI.SignalPicker.__init__
+WI.SignalPicker.__init__ = lambda self, *a, **k: (_pick(self, *a, **k), self.output.setCurrentText("Pusher"))[0]
+dr._capture_scope()
+drv = dr.store.get(name)
+drv.output("Pusher").pulse = 0.0
+w.tof.src.setCurrentText(name)
+tof_m, _ = w.tof._model()
+check("drive from a scope capture", drv.output("Pusher").wave == "DS1104Z CHAN1" and tof_m.push_wave is not None
+      and abs(tof_m.on_levels()[0] - 600) < 15, f"pusher on at {tof_m.on_levels()[0]:.0f} V from {drv.waves[0]}")
 from ionsim.gui.workspace import Workspace, TEMPLATES
 ws = Workspace(models=[(t, None) for t in TEMPLATES], persist=False)
 check("workspace", len(ws.models) == len(TEMPLATES) and ws.tabs.count() == len(TEMPLATES) + 3

@@ -6,3 +6,5 @@ pyamg            # multigrid field solver (ion funnel)
 trimesh           # STL / OBJ import
 gmsh              # STEP / IGES import (Linux also needs the system package libglu1-mesa)
 ezdxf             # DXF import (Device builder)
+pyvisa           # optional: Rigol scope capture over USB (LAN works without it)
+pyvisa-py        # optional: pure-Python VISA backend for pyvisa (no NI-VISA needed)

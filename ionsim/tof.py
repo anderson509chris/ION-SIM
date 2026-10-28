@@ -14,7 +14,8 @@ steps (midpoint values), which is second-order accurate in the step; everywhere 
 flight is analytic to round-off. A run of 10 000 ions takes well under a second.
 
 What it covers: spatial and turnaround (velocity) spread in the pusher, pulse rise and
-shape, grid transmission, single- and two-stage reflectrons, the drift angle from the
+shape (or a measured / SPICE-simulated pulse taken from a driver's imported waveform),
+grid transmission, single- and two-stage reflectrons, the drift angle from the
 beam energy (where ions land on the detector), detector size, timing jitter and
 digitizer bins, duty cycle. What it does not: field penetration through grid meshes,
 fringe fields at the edges of the plates, space charge, gridless reflectrons (use the
@@ -27,6 +28,9 @@ import numpy as np
 from dataclasses import dataclass, field, asdict, replace
 from .constants import AMU, E_CHARGE
 from .drivers import pulse_level
+
+WAVE_SPAN = 1e-3          # longest stretch of an imported pusher waveform that is followed step by step
+MAX_WAVE_STEPS = 200_000
 
 REFLECTRONS = ("two-stage", "single-stage", "none")
 SHAPES = ("linear", "rc")
@@ -87,6 +91,8 @@ class OATof:
     v_pull: float = -600.0       # added to the puller grid during the pulse
     v_drift: float = -6000.0     # drift tube and reflectron entrance grid
     pulse: Pulse = field(default_factory=Pulse)
+    push_wave: tuple = None      # (waveforms.Trace, scale) added to the pusher plate, e.g. a scope capture
+    pull_wave: tuple = None      # (waveforms.Trace, scale) added to the puller grid
     # flight tube
     drift_length: float = 0.60   # drift grid to reflectron entrance (or to the detector, linear)
     reflectron: str = "two-stage"
@@ -130,12 +136,51 @@ class OATof:
         g = float(self.pulse.level(t))
         pull = self.v_rest if self.v_rest_pull is None else self.v_rest_pull
         v = [self.v_rest + self.v_push * g, pull + self.v_pull * g, self.v_drift, self.v_drift]
+        for k, w in enumerate((self.push_wave, self.pull_wave)):
+            if w:
+                v[k] += w[1] * float(w[0].level(t))
         if self.reflectron != "none":
             v.append(self.v_drift)
             if self.reflectron == "two-stage":
                 v.append(self.v_r1)
             v.append(self.v_r2)
         return np.array(v)
+
+    def waves(self):
+        return [w for w in (self.push_wave, self.pull_wave) if w]
+
+    def schedule(self, steps_per_edge=60):
+        """[(t0, t1, steps)] covering [0, inf); steps = 0 where the fields are constant. Pulse
+        edges get steps_per_edge steps; an imported waveform is followed at its own time step
+        for one record (or one period), after which its last value holds."""
+        base = [(a, b, steps_per_edge if ch else 0) for a, b, ch in self.pulse.schedule()]
+        ws = self.waves()
+        if not ws:
+            return base
+        t_w = min(max(w[0].delay + (w[0].cycle() if w[0].repeat else w[0].duration()) for w in ws), WAVE_SPAN)
+        dt = min(w[0].time_step() for w in ws)
+        if not np.isfinite(dt):
+            return base
+        cuts = sorted({0.0, t_w} | {x for a, b, _ in base for x in (a, b) if x < t_w})
+        out = []
+        for a, b in zip(cuts[:-1], cuts[1:]):
+            n_p = next((n for a0, b0, n in base if a0 <= a < b0), 0)
+            out.append((a, b, int(min(max(n_p, np.ceil((b - a) / dt)), MAX_WAVE_STEPS))))
+        out.append((t_w, np.inf, 0))
+        return out
+
+    def on_levels(self):
+        """(pusher plate, puller grid) potentials while the push is on. With imported waveforms
+        this is their average over the time the push field is above 90 % of its peak."""
+        pull = self.v_rest if self.v_rest_pull is None else self.v_rest_pull
+        if not self.waves():
+            return self.v_rest + self.v_push, pull + self.v_pull
+        t_end = max(a for a, b, n in self.schedule())
+        ts = np.linspace(0, max(t_end, 1e-9), 4000)
+        pv = np.array([self.potentials(t)[:2] for t in ts])
+        d = pv[:, 0] - pv[:, 1]
+        sel = np.abs(d) >= 0.9 * np.abs(d).max() if np.abs(d).max() > 0 else np.ones(len(d), bool)
+        return float(pv[sel, 0].mean()), float(pv[sel, 1].mean())
 
     def fields(self, t):
         """E_x in each gap (V/m) at time t."""
@@ -152,7 +197,7 @@ class OATof:
         return replace(self, pulse=replace(self.pulse), **kw)
 
     def to_dict(self):
-        return asdict(self)
+        return asdict(replace(self, push_wave=None, pull_wave=None))
 
     @classmethod
     def from_dict(cls, d):
@@ -420,14 +465,20 @@ def fly(tof, beam, species, rng=None, n_record=40, steps_per_edge=60):
     X = np.array([p[0] for p in pl]); kinds = [p[1] for p in pl]
     idx, mz, q, mass, x0, vx, y0, vy, z0, vz = make_ions(tof, beam, species, rng)
     st = _State(x0, vx, q / mass, n_record)
-    for a, b, changing in tof.pulse.schedule():
-        if not changing:
+    waves = bool(tof.waves())
+    for a, b, nst in tof.schedule(max(steps_per_edge, 4)):
+        if not nst:
             _advance(st, b, tof.fields(a if np.isfinite(b) else a + 1e-12), X, kinds, tof.grid_transmission)
             continue
-        nst = max(steps_per_edge, 4)
         ts = np.linspace(a, b, nst + 1)
-        for t0, t1 in zip(ts[:-1], ts[1:]):
+        for k, (t0, t1) in enumerate(zip(ts[:-1], ts[1:])):
             _advance(st, t1, tof.fields(0.5 * (t0 + t1)), X, kinds, tof.grid_transmission)
+            if waves and k % 50 == 49 and not np.any((st.status == ST_FLYING) & (st.reg < 2)):
+                break                                   # every ion is past the drift grid: the pulse no longer matters
+        else:
+            continue
+        _advance(st, np.inf, tof.fields(t1), X, kinds, tof.grid_transmission)
+        break
     # landing point on the detector plane
     t = st.t_det
     z_hit = z0 + vz * np.where(np.isfinite(t), t, st.t)
@@ -549,14 +600,14 @@ def tune(tof, beam, species, keys=("v_r2", "v_r1"), n=800, rounds=3, progress=No
 
 def _pull_on(tof):
     """Puller grid potential while the pulse is high."""
-    return (tof.v_rest if tof.v_rest_pull is None else tof.v_rest_pull) + tof.v_pull
+    return tof.on_levels()[1]
 
 
 def nominal_energy(tof, beam):
     """Kinetic energy (eV per charge) an ion at the beam centre gains: start potential - drift."""
     gp = tof.push_gap
     xc = gp / 2 if beam.x0 is None else beam.x0
-    vb, vg = tof.v_rest + tof.v_push, _pull_on(tof)
+    vb, vg = tof.on_levels()
     return (vb + (vg - vb) * xc / gp) - tof.v_drift
 
 
@@ -618,7 +669,7 @@ def wiley_mclaren_focus(tof, beam):
     gp = tof.push_gap
     xc = gp / 2 if beam.x0 is None else beam.x0
     s0 = gp - xc
-    es = (tof.v_rest + tof.v_push - _pull_on(tof)) / gp
+    es = (tof.on_levels()[0] - _pull_on(tof)) / gp
     ed = (_pull_on(tof) - tof.v_drift) / tof.accel_gap
     d = tof.accel_gap
     if es == 0:

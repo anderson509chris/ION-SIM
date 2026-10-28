@@ -2,7 +2,7 @@
 
 Run:  python docs/make_screenshots.py      (opens the window, runs every tab, ~2 min)
       add --workspace to redo only the workspace and Instrument tab shots, --3d only the 3D path views,
-      --speeds only the chain run with the speed views
+      --speeds only the chain run with the speed views, --waveforms only the SPICE / scope drive shots
 """
 import os, sys, tempfile
 os.environ.setdefault("IONSIM_DRIVERS", os.path.join(tempfile.mkdtemp(), "drivers.json"))   # the default drivers
@@ -112,9 +112,41 @@ def go():
     t.mode.setCurrentIndex(1); t.scan_param.setCurrentIndex(0); settle()
     run(t)
     shot(t, "Scan", "tof_scan")
+    waveforms()
     instrument()
     workspace()
     app.quit()
+
+
+def waveforms():
+    """Drivers tab with the SPICE pusher / puller from examples/spice on the OA-TOF driver, the scope
+    capture dialog, and the OA-TOF tab pushed by those waveforms."""
+    from ionsim import waveforms as W
+    from ionsim.drivers import tof_pulser
+    from ionsim.gui.waveform_import import ScopeDialog
+    dr = w.drivers
+    w.tabs.setCurrentWidget(dr)
+    drv = tof_pulser("Pusher from SPICE")
+    name = dr.store.lib.add(drv, replace=False); dr.store.touch(); dr._fill_list(name); settle()
+    tr = W.spice_traces(os.path.join(os.path.dirname(__file__), "..", "examples", "spice", "oa_tof_pusher.raw"))
+    for out, sig in (("Pusher", "v(push)"), ("Puller", "v(pull)")):
+        o = drv.output(out)
+        o.wave, o.pulse = drv.add_wave(tr[sig]), 0.0
+    dr._fill_waves(); dr._fill_outputs(); dr._changed()
+    dr.list.setCurrentRow(dr.store.names().index(name)); settle()
+    dr.window.setValue(1.5); settle()
+    left = dr.findChild(QtWidgets.QScrollArea)
+    left.verticalScrollBar().setValue(left.verticalScrollBar().maximum()); settle()
+    shot(dr, "Waveforms", "drivers_spice_waveforms")
+    dr.window.setValue(0.0)
+    dlg = ScopeDialog(w); dlg.addr.setCurrentText("192.168.1.50"); dlg.memory.setChecked(True); dlg.show(); settle()
+    dlg.grab().save(os.path.join(OUT, "scope_capture_dialog.png")); print("saved scope_capture_dialog"); dlg.close()
+    t = w.tof
+    t.mode.setCurrentIndex(0)
+    t.src.setCurrentText(name); settle()
+    run(t)
+    shot(t, "Potentials", "tof_spice_pusher")
+    t.src.setCurrentIndex(0)
 
 
 def workspace():
@@ -200,6 +232,12 @@ def only_speeds():
     app.quit()
 
 
+def only_waveforms():
+    waveforms()
+    app.quit()
+
+
 QtCore.QTimer.singleShot(500, only_workspace if "--workspace" in sys.argv else only_3d if "--3d" in sys.argv
-                         else only_speeds if "--speeds" in sys.argv else go)
+                         else only_speeds if "--speeds" in sys.argv else only_waveforms if "--waveforms" in sys.argv
+                         else go)
 app.exec()

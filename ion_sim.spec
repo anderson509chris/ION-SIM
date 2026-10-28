@@ -1,5 +1,5 @@
 # PyInstaller spec for the Ion Sim desktop app.  Build with:  pyinstaller ion_sim.spec
-import glob, os, sys
+import glob, importlib.util, os, sys
 from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
@@ -15,10 +15,13 @@ a = Analysis(
     binaries=gmsh_libs,
     hiddenimports=["scipy.sparse.linalg", "matplotlib.backends.backend_qtagg", "gmsh", "ezdxf"]
                   + collect_submodules("pyamg") + collect_submodules("trimesh.exchange")
-                  + collect_submodules("ezdxf.path") + collect_submodules("ezdxf.entities"),
+                  + collect_submodules("ezdxf.path") + collect_submodules("ezdxf.entities")
+                  + [m for m in ("pyvisa", "pyvisa_py") if importlib.util.find_spec(m)],
     datas=[(p, "examples/geometry") for p in glob.glob("examples/geometry/*")
            if p.endswith((".dxf", ".step", ".ionsim"))]                         # sample files for the Device builder
-          + [(p, "examples/drivers") for p in glob.glob("examples/drivers/*.iondrv")],   # sample drivers
+          + [(p, "examples/drivers") for p in glob.glob("examples/drivers/*.iondrv")]    # sample drivers
+          + [(p, "examples/spice") for p in glob.glob("examples/spice/*")]               # sample SPICE netlist and result
+          + [(p, "examples/scope") for p in glob.glob("examples/scope/*.csv")],          # sample scope capture
     excludes=["tkinter", "PyQt5", "PyQt6", "IPython", "pytest"],
 )
 pyz = PYZ(a.pure)

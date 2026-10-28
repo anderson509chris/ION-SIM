@@ -7,6 +7,7 @@ sequencer and any number of outputs. Each output's voltage is
               + tone_sign * sum_k A_k cos(2 pi f_k t + phase_k)
               + tw_amp * level_p(t)            (only if the output carries TWAVE phase p)
               + pulse * gate(t)                (the driver's pulse, e.g. a TOF pusher)
+              + wave_scale * trace(t)          (an imported waveform, see below)
 
 level_p(t) is the TWAVE gate for phase p: n_on of the n_phases outputs are high at a
 time, the pattern steps one phase every step_time = pitch / speed, and each edge ramps
@@ -14,7 +15,9 @@ over rise_time. tone_sign is +1 / -1 / 0 per output, so the same tones can be ad
 in phase with the RF (quadrupolar excitation: + on one rod pair, - on the other), across
 one rod pair (dipolar: + on x1, - on x2) or left off. gate(t) is a repeating pulse
 (rate, delay, width, 10-90 % rise and fall, linear or RC edges); each output adds its own
-pulse amplitude, so a pusher and a puller can share one timing.
+pulse amplitude, so a pusher and a puller can share one timing. trace(t) is a recorded
+waveform kept with the driver (waveforms.Trace): a SPICE simulation of the real circuit or a
+scope capture of the real board, interpolated between samples and repeated with its period.
 
 Because fields add linearly, a device is solved once per distinct component (DC, cos and
 sin of each frequency, each TWAVE phase), not once per output, so 8 tones on a quad or
@@ -22,8 +25,10 @@ sin of each frequency, each TWAVE phase), not once per output, so 8 tones on a q
 """
 import json
 import os
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, replace
 import numpy as np
+
+from .waveforms import Trace
 
 LIBRARY_PATH = os.environ.get("IONSIM_DRIVERS", os.path.join(os.path.expanduser("~"), ".ionsim", "drivers.json"))
 
@@ -45,6 +50,8 @@ class Output:
     tw: int = -1               # TWAVE phase carried (0-based), -1 = none
     tone_sign: float = 0.0     # multiplier on the driver's tones: +1, -1 or 0
     pulse: float = 0.0         # V added while the driver's pulse is high
+    wave: str = ""             # name of one of the driver's imported waveforms, "" = none
+    wave_scale: float = 1.0    # multiplier on that waveform (probe or amplifier gain, sign)
 
 
 @dataclass
@@ -65,6 +72,7 @@ class Driver:
     pulse_rise: float = 10e-9  # s, 10-90 %
     pulse_fall: float = 10e-9  # s, 10-90 %
     pulse_shape: str = "linear"  # "linear" or "rc"
+    waves: list = field(default_factory=list)   # imported waveforms (waveforms.Trace)
     notes: str = ""
 
     # ---- TWAVE ----
@@ -94,6 +102,34 @@ class Driver:
         """(PulseSpec, amplitude) of one output, or None."""
         o = self.output(out) if isinstance(out, str) else out
         return (self.pulse_spec(), o.pulse) if o.pulse else None
+
+    # ---- imported waveforms ----
+    def wave(self, name):
+        return next((w for w in self.waves if w.name == name), None)
+
+    def add_wave(self, tr):
+        """Add a waveform (renamed if its name is taken); returns its name."""
+        base, k = tr.name.replace(" / ", " - "), 2
+        tr.name = base
+        while self.wave(tr.name) is not None:
+            tr.name = f"{base} ({k})"; k += 1
+        self.waves.append(tr)
+        return tr.name
+
+    def remove_wave(self, name):
+        self.waves = [w for w in self.waves if w.name != name]
+        for o in self.outputs:
+            if o.wave == name:
+                o.wave = ""
+
+    def wave_of(self, out):
+        """(Trace, scale) an output carries, or None."""
+        o = self.output(out) if isinstance(out, str) else out
+        w = self.wave(o.wave) if o.wave and o.wave_scale else None
+        return (w, o.wave_scale) if w is not None else None
+
+    def has_wave(self):
+        return any(self.wave_of(o) for o in self.outputs)
 
     # ---- outputs ----
     def output(self, name):
@@ -129,6 +165,9 @@ class Driver:
         p = self.pulse_of(out)
         if p:
             v += p[1] * p[0].level(t)
+        w = self.wave_of(out)
+        if w:
+            v += w[1] * w[0].level(t)
         return v
 
     def max_freq(self):
@@ -139,13 +178,16 @@ class Driver:
 
     # ---- storage ----
     def to_dict(self):
-        return asdict(self)
+        d = asdict(replace(self, waves=[]))
+        d["waves"] = [w.to_dict() for w in self.waves]
+        return d
 
     @classmethod
     def from_dict(cls, d):
         d = dict(d)
         d["outputs"] = [Output(**o) for o in d.get("outputs", [])]
         d["tones"] = [Tone(**t) for t in d.get("tones", [])]
+        d["waves"] = [w if isinstance(w, Trace) else Trace.from_dict(w) for w in d.get("waves", [])]
         known = set(cls.__dataclass_fields__)
         return cls(**{k: v for k, v in d.items() if k in known})
 

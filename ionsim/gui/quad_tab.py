@@ -278,6 +278,9 @@ class QuadTab(SimTab):
         for rod, out in wiring.items():
             o = d.output(out)
             ph[rod] = (o.dc, o.rf * np.exp(1j * np.radians(o.rf_phase)))
+            w = d.wave_of(o)
+            if w:                                          # an imported waveform's DC and RF-frequency parts
+                ph[rod] = (ph[rod][0] + w[1] * float(w[0].v.mean()), ph[rod][1] + w[1] * w[0].phasor(d.rf_freq))
         dx = (ph["x+"][0] + ph["x-"][0]) / 2 - (ph["y+"][0] + ph["y-"][0]) / 2
         px = (ph["x+"][1] + ph["x-"][1]) / 2 - (ph["y+"][1] + ph["y-"][1]) / 2
         return dx / 2, abs(px) / 2
@@ -497,6 +500,10 @@ class QuadTab(SimTab):
         steps = self.rf.values()["steps"]
         fmax = max(d.max_freq(), f_rf)
         dt = 1 / fmax / steps
+        for o in wiring.values():
+            w = d.wave_of(o)
+            if w:                                          # follow an imported waveform at its own step
+                dt = min(dt, w[0].time_step())
         volts = {rod: (lambda tt, name=name: float(d.waveform(name, tt))) for rod, name in wiring.items()}
         fld = GridField2D(grid, basis, volts)
         U, V = self._driver_uv(d, wiring)

@@ -210,6 +210,12 @@ class Device:
         w = self.driver_of(e)
         return w[0].pulse_of(w[1]) if w else None
 
+    def wave_of(self, e):
+        """(Trace, scale) of an electrode wired to a driver output that carries an imported
+        waveform, or None."""
+        w = self.driver_of(e)
+        return w[0].wave_of(w[1]) if w else None
+
     def wire_driver(self, names, drv, mode="one", output=None, start_phase=0, rf_alt="across"):
         """Wire electrodes to a driver. mode "one": all to `output`. mode "twave": TWAVE
         phases in order along the ion axis (electrodes side by side share a phase), each to
@@ -512,7 +518,8 @@ def part_values(dev):
     """Boundary value per electrode id for every part, and what each part is.
     Parts: "dc"; "cos"/"sin" at the device RF frequency and "cos@f"/"sin@f" at any other
     frequency (driver RF, excitation tones); "tw{p}" for the device's TWAVE phases and
-    "tw@{driver}#{p}" for a driver's. Returns ({name: values}, {name: meta})."""
+    "tw@{driver}#{p}" for a driver's; "pulse@{driver}" for a driver's pulse and
+    "wave@{driver}#{waveform}" for an imported waveform. Returns ({name: values}, {name: meta})."""
     n = len(dev.electrodes) + 1
     vals, meta = {"dc": np.zeros(n)}, {"dc": ("dc",)}
 
@@ -535,6 +542,10 @@ def part_values(dev):
         pu = dev.pulse_of(e)
         if pu:
             part(f"pulse@{pu[0].key}", ("pulse", pu[0]))[k] = pu[1]
+        wv = dev.wave_of(e)
+        if wv:
+            drv = dev.driver_of(e)[0]
+            part(f"wave@{drv.name}#{wv[0].name}", ("wave", wv[0]))[k] = wv[1]
     out_v, out_m = {}, {}
     for name, v in vals.items():
         v[np.abs(v) < 1e-12] = 0.0
@@ -581,7 +592,7 @@ class DeviceField:
                 out.append(np.cos(2 * np.pi * m[1] * t))
             elif m[0] == "sin":
                 out.append(-np.sin(2 * np.pi * m[1] * t))
-            elif m[0] == "pulse":
+            elif m[0] in ("pulse", "wave"):
                 out.append(float(m[1].level(t)))
             else:
                 spec, k = m[1], m[2]
@@ -597,6 +608,9 @@ class DeviceField:
 
     def pulse_specs(self):
         return list({m[1] for m in self.meta.values() if m[0] == "pulse"})
+
+    def waves(self):
+        return [m[1] for m in self.meta.values() if m[0] == "wave"]
 
     def tw_speed(self):
         """Slowest wave speed (m/s) over the TWAVE sequencers in use, at the device pitch."""
@@ -724,12 +738,15 @@ def fly_device(fld, mz, K0, n, pressure_torr, temp_k=300.0, charge_state=1, cent
     K = K_s.min()                                   # slowest species sets the flight time
     freqs = fld.frequencies()
     has_rf = bool(freqs)
+    # ions are born spread over the longest period of the drive (RF, tones, or a repeating imported waveform)
+    periods = [1 / f for f in freqs] + [w.cycle() for w in fld.waves() if w.repeat and w.cycle() > 0]
     steps_tw = [sp.step for sp in fld.tw_specs() if np.isfinite(sp.step) and sp.step > 0]
     if dt is None:
         cands = [1 / (max(freqs) * 30)] if has_rf else []
         cands += [st / 20 for st in steps_tw]
         cands += [sp.rise / 4 for sp in fld.tw_specs() if sp.rise > 0]
         cands += [r / 4 for sp in fld.pulse_specs() for r in (sp.rise, sp.fall) if r > 0]
+        cands += [w.time_step() for w in fld.waves()]
         L = max(z_end - z_start, 1e-6)
         cands.append(L / 2000)
         tau = float(np.min(mz_s * AMU * K_s / E_CHARGE))
@@ -750,7 +767,7 @@ def fly_device(fld, mz, K0, n, pressure_torr, temp_k=300.0, charge_state=1, cent
 
     def fly_once(f, dwell=None, dwell_every=5, prog=progress):
         ions = disc_ions(len(sp), mz_s[sp] * zc_s[sp], K_s[sp], zc_s[sp], center, radius, z_start, temp_k,
-                         birth_window=(min(1 / min(freqs), 1e-4) if has_rf else 0.0), rng=rng)
+                         birth_window=min(max(periods), 1e-4) if periods else 0.0, rng=rng)
         if energy_ev > 0:
             v_in = np.sqrt(2 * energy_ev * E_CHARGE / (mz_s[sp] * AMU))
             ions.vel[:, 2] += v_in

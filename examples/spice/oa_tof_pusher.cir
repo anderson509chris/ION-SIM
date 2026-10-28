@@ -1,0 +1,23 @@
+* OA-TOF pusher and puller pulser driving the plates through their cables.
+* Run it from the Drivers tab (section 5, "Run SPICE netlist...") or with
+*   ngspice -b -r oa_tof_pusher.raw oa_tof_pusher.cir
+* push and pull are the plate voltages; feed them to the "Pusher" and "Puller" outputs.
+
+* 600 V push and -600 V pull, 10 ns edges, 5 us wide, starting at 0.2 us
+Vpush src_p 0 PULSE(0 600 0.2u 10n 10n 5u 100u)
+Vpull src_n 0 PULSE(0 -600 0.2u 10n 10n 5u 100u)
+
+* pulser output resistance, cable / wiring inductance, plate capacitance, bleed
+Rp src_p a_p 15
+Lp a_p push 150n
+Cp push 0 40p
+Rbp push 0 100k
+
+Rn src_n a_n 15
+Ln a_n pull 150n
+Cn pull 0 25p
+Rbn pull 0 100k
+
+.tran 1n 8u
+.save v(push) v(pull)
+.end
