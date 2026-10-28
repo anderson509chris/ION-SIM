@@ -18,6 +18,7 @@ class SourcePicker(QtCore.QObject):
         self.sources = {}                       # model name -> controller
         self.combo = QtWidgets.QComboBox(); self.combo.addItem(manual)
         self.combo.setToolTip(tip)
+        self.combo.setProperty("ionsim_nosave", True)       # the workspace saves links by model name
         self.step = QtWidgets.QDoubleSpinBox(); self.step.setRange(-1e4, 1e4); self.step.setDecimals(2)
         self.step.setValue(10.0); self.step.setSuffix(" V"); self.step.setToolTip(step_tip)
         self.note = QtWidgets.QLabel(); self.note.setWordWrap(True); self.note.hide()

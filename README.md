@@ -67,13 +67,14 @@ PyInstaller can only build for the operating system it runs on, which is why the
 
 The app opens on **Home**, a start page listing every device. Each pick opens a **model** in its own tab, laid out like the classic tabs: settings in one scrolling column with **Run**, **Stop** and progress under it, the plot tabs on the right and the results text under the plots. Several models can be open at once (two funnels, a funnel and a TOF, …); the **Drivers** tab at the end holds the electronics they share.
 
-* **Tabs.** Double-click a model's tab to rename it, close it with its ×, drag tabs to reorder them, and right-click a tab to run, rename or close it. The open models, and which model feeds which, come back the next time the app starts; Home lists them under **Open models**.
+* **Tabs.** Double-click a model's tab to rename it, close it with its ×, drag tabs to reorder them, and right-click a tab to run, rename or close it. Home lists the open models under **Open models**.
 * **Stages.** Models chain into one instrument, **ESI inlet → ion funnel → quadrupole (or collision cell) → OA-TOF**, by a "… from" row at the top of a model's gas or beam settings (or right-click its tab > **Take ions from**):
   * an **ion funnel** takes its pressure, gas throughput and ion species from an ESI inlet (**Gas > Gas and ions from**), and switches to the flow-field gas model the first time;
   * a **quadrupole** takes the ions that left a funnel or Device builder model, ion by ion (**Beam > Ions from**): each keeps its position and side speed and gains **energy added on the way in**, the DC step to the rods (ions broken up by heating are dropped; their RF phase is new);
   * an **OA-TOF** takes its beam (energy and spread, size, divergence) and ion mixture from a quadrupole, funnel or Device builder exit (**Incoming beam > Ions from**; scaled so the most abundant species has 2000 ions).
 
   Each model reads the last run of the one before it, and the tab shows the link (*OA-TOF ← Collision cell*). **Run > Run with the stages before it** (F6) runs the whole chain in order.
+* **Setups.** **File > Save setup** (Ctrl+Shift+S) writes the whole workspace to one `.ionsetup` file: every model with all its settings and ion tables, which model feeds which, the drivers, and the geometry files the funnel and Device builder use (named relative to the setup, so keep them beside it or below it). **File > Open setup** (Ctrl+O) replaces the open models with the saved ones; **New setup** starts empty. When the app closes it keeps the setup for next time, so it opens on Home with everything as you left it. Results are not saved: run again (F6 for a chain). A saved driver that differs from your library's driver of the same name comes in as *name (from setup)*, and the setup's models use that one.
 * **Run** (F5) runs the model in front, **Stop** (Shift+F5) stops it.
 
 Runs happen in the background. Every plot can be zoomed, panned and saved (**File > Save current plot**), and **File > Export results (CSV)** writes the selected model's numbers out. The earlier one-tab-per-device window is still there: **View > Classic tabs window**, or `python ion_sim_app.py --classic`; there the OA-TOF tab can take its ions from the Quadrupole, Ion funnel or Device builder tab the same way. The sections below describe each device.
@@ -529,7 +530,7 @@ ION-SIM/
 │   ├── tof.py              # OA-TOF: pusher pulse, reflectron, exact gap-by-gap flight, resolution
 │   ├── stages.py           # stages: one model's exit ions (or the inlet's gas) start the next model
 │   ├── collisions.py       # collision cell: hard-sphere gas collisions, axial drag field
-│   └── gui/                # PySide6 app: workspace.py (Home, one tab per model), one controller per device
+│   └── gui/                # PySide6 app: workspace.py (Home, one tab per model, setup files), one controller per device
 │                           #   (the *_tab.py files, also the classic tabbed window), shared widgets,
 │                           #   device_tab.py and electrode_view.py (clickable electrodes),
 │                           #   drivers_tab.py, tof_tab.py, heating_view.py, ion_table.py (ion mixtures)

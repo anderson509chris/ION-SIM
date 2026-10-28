@@ -258,4 +258,16 @@ check("stage chain", [ws3.source_of(m).name if ws3.source_of(m) else None for m 
       and f3.ctl.gas.values()["p"] == 1.5 and len(f3.ctl.ion_table.species()) == 2
       and len(q3.ctl.ion_table.species()) == 2 and len(idx_e) == ex.n and abs(ions_e.pos[:, 2]).max() == 0,
       " → ".join(m.name for m in ws3.models))
+# setup files: every setting and link comes back
+from ionsim.gui import settings_io
+q3.ctl.gas.set("p", 0.02); q3.ctl.gas_kind.setCurrentText("Ar"); t3.ctl.tube.set("L", 777.0)
+f3.ctl.ion_table.set_species([IonSpecies("x", 321, 2, 0.9, 50)])
+setup = os.path.join(tempfile.mkdtemp(), "test.ionsetup")
+ws3._write(setup, os.path.dirname(setup))
+ws4 = Workspace(models=[], persist=False)
+notes = ws4.apply_setup(ws4._read(setup), os.path.dirname(setup))
+same = all(settings_io.save(a.ctl.scroll.widget()) == settings_io.save(b.ctl.scroll.widget())
+           for a, b in zip(ws3.models, ws4.models))
+check("setup file", same and not notes and [ws4.source_of(m).name if ws4.source_of(m) else None for m in ws4.models]
+      == [None, "In", "F", "Q"], f"{len(ws4.models)} models, {os.path.getsize(setup) // 1024} kB")
 print(f"all good in {time.time() - t0:.0f} s")

@@ -931,15 +931,23 @@ class DeviceTab(SimTab):
             self.save_setup_to(path)
 
     def save_setup_to(self, path):
+        d = self.setup_dict(os.path.dirname(os.path.abspath(path)))
+        with open(path, "w") as f:
+            json.dump(d, f, indent=1)
+        self.log(f"Saved setup to {path}")
+
+    def setup_dict(self, base_dir=None):
+        """Everything this tab needs to come back: the device (electrodes, wiring, drivers), the geometry
+        file (relative to base_dir when given) and every setting. None when no geometry is open."""
+        if self.dev is None:
+            return None
         d = self.dev.to_dict()
-        d["source"] = os.path.relpath(self.dev.source, os.path.dirname(os.path.abspath(path)))
+        d["source"] = os.path.relpath(self.dev.source, base_dir) if base_dir else os.path.abspath(self.dev.source)
         d["gui"] = {"units": self.units.currentText(), "axis": self.axis.currentText(), "quality": self.quality.currentText(),
                     "h_mm": self.h.value(), "ions": self.ions.values(), "species": self._species_list(),
                     "drive": self.drive.values(), "geo": self.geo.values(),
                     "extra": self.extra.values(), "flow": self.flow.currentIndex(), "heat": self.heat.values()}
-        with open(path, "w") as f:
-            json.dump(d, f, indent=1)
-        self.log(f"Saved setup to {path}")
+        return d
 
     def open_setup(self):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open device setup", examples_dir(), "Ion Sim setup (*.ionsim)")
@@ -953,11 +961,16 @@ class DeviceTab(SimTab):
         except Exception as e:
             self._error("Could not read the setup", str(e))
             return
+        if self.apply_setup(d, os.path.dirname(os.path.abspath(path))):
+            self.log(f"Opened setup {os.path.basename(path)}")
+
+    def apply_setup(self, d, base_dir=""):
+        """Bring back a setup_dict. Returns False (and says why) when its geometry file is missing."""
         src = d.get("source", "")
-        src = src if os.path.isabs(src) else os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(path)), src))
+        src = src if os.path.isabs(src) else os.path.normpath(os.path.join(base_dir, src))
         if not os.path.exists(src):
             self._error("Geometry file missing", f"The setup refers to\n{src}\nwhich was not found.")
-            return
+            return False
         gui = d.get("gui", {})
         self._set_combo(self.units, gui.get("units", "mm")); self._set_combo(self.axis, gui.get("axis", "z"))
         self.flow.setCurrentIndex(int(gui.get("flow", 0)))
@@ -971,7 +984,7 @@ class DeviceTab(SimTab):
             form.blockSignals(False)
         self.both.setChecked(d.get("both_boards", True)); self.open_in.setChecked(d.get("open_entrance", True))
         if not self.load_file(src, d.get("kind")):
-            return
+            return False
         missing = self.dev.apply_dict(d)
         self._adopt_drivers()
         for form, key in ((self.ions, "ions"),):
@@ -990,9 +1003,9 @@ class DeviceTab(SimTab):
         if gui.get("quality") == "Custom":
             self.h.setValue(gui.get("h_mm", self.h.value()))
         self._fill_table(); self._draw_geometry()
-        self.log(f"Opened setup {os.path.basename(path)}")
         if missing:
             self.log("  Note: these electrodes are no longer in the file: " + ", ".join(missing))
+        return True
 
     def _species_list(self):
         try:

@@ -11,7 +11,12 @@ quadrupole its ions from a funnel or Device builder, and an OA-TOF its beam from
 (the "... from" row at the top of the model's gas or beam settings). Chained, inlet → funnel →
 quadrupole (gas-filled as a collision cell, or not) → OA-TOF runs in order with F6.
 """
+import json
+import os
 from PySide6 import QtCore, QtWidgets
+
+from ..drivers import LIBRARY_PATH, Driver
+from . import settings_io
 
 from .quad_tab import QuadTab
 from .twave_tab import TwaveTab
@@ -23,6 +28,8 @@ from .tof_tab import TofTab
 from .drivers_tab import DriversTab
 
 APP_NAME = "Ion Sim"
+SETUP_FILTER = "Ion Sim setup (*.ionsetup)"
+LAST_SETUP = os.path.join(os.path.dirname(LIBRARY_PATH), "last_setup.ionsetup")   # brought back on the next start
 
 # template name -> (controller class, one-line description)
 TEMPLATES = {
@@ -106,19 +113,35 @@ class Workspace(QtWidgets.QMainWindow):
         self._menus()
         self.statusBar().showMessage("Pick a device to set up, or a tab to carry on")
 
-        rows = models if models is not None else (self._saved_models() if persist else [])
+        self.path = None                            # the setup file open now
+        if models is None and persist and os.path.exists(LAST_SETUP):
+            try:
+                self.apply_setup(self._read(LAST_SETUP), os.path.dirname(LAST_SETUP), quiet=True)
+            except Exception as e:                  # a damaged last setup must never stop the app from opening
+                self.statusBar().showMessage(f"Could not bring back the last setup: {e}", 10000)
+        else:
+            rows = models if models is not None else (self._saved_models() if persist else [])
+            self._open_rows(rows)
+        self.tabs.setCurrentWidget(self.home)
+        self._title()
+
+    def _open_rows(self, rows):
         rows = [tuple(r) + (None,) * (3 - len(r)) for r in rows if r[0] in TEMPLATES]
         for tpl, name, _ in rows:
             self.add_model(tpl, name, select=False)
-        for m, (_, _, src) in zip(self.models, rows):
+        for m, (_, _, src) in zip(self.models[-len(rows):] if rows else [], rows):
             if src and m.is_stage:
                 self.link(m, src)
-        self.tabs.setCurrentWidget(self.home)
 
     # ---------- menus ----------
     def _menus(self):
         m = self.menuBar().addMenu("&File")
         act = m.addAction("Home"); act.setShortcut("Ctrl+H"); act.triggered.connect(lambda: self.tabs.setCurrentWidget(self.home))
+        act = m.addAction("New setup"); act.triggered.connect(self.new_setup)
+        act = m.addAction("Open setup…"); act.setShortcut("Ctrl+O"); act.triggered.connect(self.open_setup)
+        act = m.addAction("Save setup"); act.setShortcut("Ctrl+Shift+S"); act.triggered.connect(self.save_setup)
+        act = m.addAction("Save setup as…"); act.triggered.connect(lambda: self.save_setup(ask=True))
+        m.addSeparator()
         add = m.addMenu("Add model")
         for tpl in TEMPLATES:
             add.addAction(tpl).triggered.connect(lambda _=False, t=tpl: self.add_model(t))
@@ -166,13 +189,16 @@ class Workspace(QtWidgets.QMainWindow):
         if QtWidgets.QMessageBox.question(self, APP_NAME, f"Close '{m.name}'? Its settings and results are dropped.") \
                 != QtWidgets.QMessageBox.Yes:
             return
+        self._drop(m)
+        self.tabs.setCurrentWidget(self.models[-1].ctl if self.models else self.home)
+
+    def _drop(self, m):
         m.ctl.stop()
         if m.ctl._thread is not None:
             m.ctl._thread.quit(); m.ctl._thread.wait(3000)
         self.tabs.removeTab(self.tabs.indexOf(m.ctl)); m.ctl.setParent(None)
         self.models.remove(m)
         self._relink()
-        self.tabs.setCurrentWidget(self.models[-1].ctl if self.models else self.home)
 
     def _rename(self, m):
         if m is None:
@@ -199,6 +225,137 @@ class Workspace(QtWidgets.QMainWindow):
             self.settings.setValue("workspace/models", "\n".join(
                 f"{m.template}\t{m.name}\t{(m.ctl.source_name() or '') if m.is_stage else ''}" for m in order))
         self._fill_open()
+
+    # ---------- setup files ----------
+    def setup_state(self, base_dir=None):
+        """The whole workspace as plain data: every model's settings and link, and the drivers.
+        Geometry files are named relative to base_dir when given. Results are not kept."""
+        from .device_tab import DeviceTab
+        from .funnel_tab import FunnelTab
+        rows = []
+        for m in sorted(self.models, key=lambda m: self.tabs.indexOf(m.ctl)):
+            row = {"template": m.template, "name": m.name,
+                   "ions_from": m.ctl.source_name() if m.is_stage else None}
+            if isinstance(m.ctl, DeviceTab):
+                row["device"] = m.ctl.setup_dict(base_dir)
+            else:
+                row["settings"] = settings_io.save(m.ctl.scroll.widget())
+            if isinstance(m.ctl, FunnelTab) and m.ctl.cad_path:
+                row["cad"] = _rel(m.ctl.cad_path, base_dir)
+            rows.append(row)
+        return {"ionsim_setup": 1, "models": rows, "drivers": self.drivers.store.lib.to_list()}
+
+    def apply_setup(self, d, base_dir="", quiet=False):
+        """Replace the open models with the ones in a setup_state."""
+        from .device_tab import DeviceTab
+        from .funnel_tab import FunnelTab
+        if "ionsim_setup" not in d:
+            raise ValueError("not an Ion Sim setup file")
+        rename = self._adopt_drivers(d.get("drivers", []), quiet)
+        for m in list(self.models):
+            self._drop(m)
+        rows = [r for r in d.get("models", []) if r.get("template") in TEMPLATES]
+        self._open_rows([(r["template"], r["name"], r.get("ions_from")) for r in rows])
+        notes = []
+        for m, r in zip(self.models, rows):
+            if isinstance(m.ctl, DeviceTab):
+                if r.get("device"):
+                    m.ctl.apply_setup(_renamed(r["device"], rename), base_dir)
+                continue
+            if isinstance(m.ctl, FunnelTab) and r.get("cad"):
+                path = _abs(r["cad"], base_dir)
+                if os.path.exists(path):
+                    m.ctl.load_geometry(path)
+                else:
+                    notes.append(f"'{m.name}': geometry file {path} not found")
+            bad = settings_io.restore(m.ctl.scroll.widget(), _renamed(r.get("settings", {}), rename))
+            if bad:
+                notes.append(f"'{m.name}': " + ", ".join(b.split(" / ")[-1] for b in bad) + " no longer available")
+            m._fitted = False
+        for m, r in zip(self.models, rows):                 # links again, now every model's settings are in
+            if m.is_stage:
+                self.link(m, r.get("ions_from"))
+        self._save_models()
+        if notes and not quiet and QtWidgets.QApplication.platformName() != "offscreen":
+            box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Information, APP_NAME,
+                                        "Opened, with notes:\n" + "\n".join(notes), parent=self)
+            box.setModal(False); box.show()
+        return notes
+
+    def _adopt_drivers(self, rows, quiet):
+        """The setup's drivers go into the library. One that differs from the library's driver of the same
+        name comes in as '<name> (from setup)', and the models use that one. Returns {old name: new name}."""
+        store, rename = self.drivers.store, {}
+        for row in rows:
+            drv = Driver.from_dict(row)
+            have = store.get(drv.name)
+            if have is not None and have.to_dict() == drv.to_dict():
+                continue
+            if have is not None:
+                new = store.lib.add(drv.copy(f"{drv.name} (from setup)"), replace=False)
+                rename[drv.name] = new
+            else:
+                store.lib.add(drv.copy())
+        if rows:
+            store.touch()
+        return rename
+
+    def _read(self, path):
+        with open(path) as f:
+            return json.load(f)
+
+    def _write(self, path, base_dir=None):
+        d = self.setup_state(base_dir)
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(d, f, indent=1)
+        os.replace(tmp, path)
+
+    def new_setup(self):
+        if self.models and QtWidgets.QMessageBox.question(
+                self, APP_NAME, "Close every model and start an empty setup?") != QtWidgets.QMessageBox.Yes:
+            return
+        for m in list(self.models):
+            self._drop(m)
+        self.path = None
+        self._save_models(); self._title()
+        self.tabs.setCurrentWidget(self.home)
+
+    def open_setup(self, path=None):
+        if not path:
+            path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open setup", os.path.dirname(self.path or ""), SETUP_FILTER)
+        if not path:
+            return
+        try:
+            notes = self.apply_setup(self._read(path), os.path.dirname(os.path.abspath(path)))
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, APP_NAME, f"Could not open {path}:\n{e}")
+            return
+        self.path = path
+        self._title()
+        self.statusBar().showMessage(f"Opened {os.path.basename(path)}" + (" (with notes)" if notes else ""), 8000)
+        self.tabs.setCurrentWidget(self.models[-1].ctl if self.models else self.home)
+
+    def save_setup(self, ask=False):
+        path = self.path
+        if ask or not path:
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save setup", self.path or "instrument.ionsetup", SETUP_FILTER)
+        if not path:
+            return
+        if not path.endswith(".ionsetup"):
+            path += ".ionsetup"
+        try:
+            self._write(path, os.path.dirname(os.path.abspath(path)))
+        except OSError as e:
+            QtWidgets.QMessageBox.warning(self, APP_NAME, f"Could not save {path}:\n{e}")
+            return
+        self.path = path
+        self._title()
+        self.statusBar().showMessage(f"Saved {path}", 6000)
+
+    def _title(self):
+        self.setWindowTitle(f"{os.path.basename(self.path)} – {APP_NAME}" if self.path else APP_NAME)
 
     # ---------- stages ----------
     def link(self, stage, source):
@@ -399,8 +556,39 @@ class Workspace(QtWidgets.QMainWindow):
 
     def closeEvent(self, e):
         self._save_models()
+        if self.persist:
+            try:
+                self._write(LAST_SETUP)
+            except Exception as err:            # never block quitting
+                print("Could not keep the setup for next time:", err)
         for m in self.models:
             m.ctl.stop()
             if m.ctl._thread is not None:
                 m.ctl._thread.quit(); m.ctl._thread.wait(3000)
         e.accept()
+
+
+def _rel(path, base_dir):
+    return os.path.relpath(path, base_dir) if base_dir else os.path.abspath(path)
+
+
+def _abs(path, base_dir):
+    return path if os.path.isabs(path) else os.path.normpath(os.path.join(base_dir or "", path))
+
+
+def _renamed(state, rename):
+    """A saved state with driver names swapped for the names they came in under."""
+    if not rename:
+        return state
+    def fix(v):
+        if isinstance(v, str):
+            for old, new in rename.items():
+                if v == old or v.startswith(old + " / "):
+                    return new + v[len(old):]
+            return v
+        if isinstance(v, dict):
+            return {k: fix(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [fix(x) for x in v]
+        return v
+    return fix(state)
