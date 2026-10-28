@@ -113,19 +113,28 @@ def go():
 
 
 def workspace():
-    """The workspace: an ion funnel tab feeding an OA-TOF tab, both run in turn (Run with the stages before it), and Home."""
+    """The workspace: ESI inlet → ion funnel → collision cell (quadrupole in 0.01 Torr N₂) → OA-TOF, run in
+    turn with Run with the stages before it; then the cell's tab and Home."""
     from ionsim.gui.workspace import Workspace
-    ws = Workspace(models=[("Ion funnel", None), ("OA-TOF", None, "Ion funnel")], persist=False)
+    ws = Workspace(models=[("ESI inlet capillary", "Inlet"), ("Ion funnel", "Funnel", "Inlet"),
+                           ("Quadrupole mass filter", "Collision cell", "Funnel"), ("OA-TOF", None, "Collision cell")],
+                   persist=False)
     ws.resize(1500, 900); ws.show(); settle()
-    m = ws.models[1]
-    ws.tabs.setCurrentWidget(m.ctl); settle()
-    ws.run_chain(m); settle(5)
+    inlet, funnel, cell, tof = ws.models
+    cell.ctl.gas.set("p", 0.01); cell.ctl.gas.set("ez", 0.5)
+    cell.ctl.op.set("a", 0.0); cell.ctl.op.set("q", 0.4)
+    ws.tabs.setCurrentWidget(tof.ctl); settle()
+    ws.run_chain(tof); settle(5)
     while ws._chain_now is not None:
         settle(1)
     settle(50)
-    m.ctl.scroll.verticalScrollBar().setValue(m.ctl.beam.y() - 6); settle()   # Incoming beam, filled from the funnel
-    m.plots.setCurrentIndex(list(m.plots.figs).index("Mass spectrum")); settle()
+    tof.ctl.scroll.verticalScrollBar().setValue(tof.ctl.beam.y() - 6); settle()   # Incoming beam, filled from the cell
+    tof.plots.setCurrentIndex(list(tof.plots.figs).index("Mass spectrum")); settle()
     ws.grab().save(os.path.join(OUT, "workspace.png")); print("saved workspace")
+    ws.tabs.setCurrentWidget(cell.ctl); settle()
+    cell.ctl.scroll.verticalScrollBar().setValue(cell.ctl.gas.y() - 6); settle()
+    cell.plots.setCurrentIndex(list(cell.plots.figs).index("Trajectories")); settle()
+    ws.grab().save(os.path.join(OUT, "quad_collision_cell.png")); print("saved quad_collision_cell")
     ws.tabs.setCurrentWidget(ws.home); settle()
     ws.grab().save(os.path.join(OUT, "workspace_add_model.png")); print("saved workspace_add_model")
     ws.close()

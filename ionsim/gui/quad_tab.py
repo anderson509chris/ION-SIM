@@ -11,7 +11,9 @@ from ..ions import make_beam, IonSpecies, expand
 from ..integrator import Simulation
 from .. import mathieu
 from ..stages import ExitIons
+from ..collisions import GASES, AxialField, HardSphereGas, ccs_from_k0
 from .common import ParamForm, SimTab
+from .stage_picker import SourcePicker
 from .driver_store import get_store
 from .ion_table import IonTable, path_style, fate_caption, species_legend, species_stats, species_color
 
@@ -38,12 +40,35 @@ class QuadTab(SimTab):
             ("steps", "Steps per RF cycle", 40, 10, 400, 0, 5, ""),
         ])
         self.ion_table = IonTable("Ions (one row per species; the first sets the operating point and scans)",
-                                  [IonSpecies("m/z 500", 500, 1, 1.0, 20)], columns=("name", "mz", "z", "n"))
+                                  [IonSpecies("m/z 500", 500, 1, 1.0, 20)], columns=("name", "mz", "z", "K0", "n"))
+        self.ion_table.setToolTip("K0 (reduced mobility in the collision gas) sets the collision cross section; "
+                                  "it only matters with gas in the quadrupole")
         self.ion = ParamForm("Beam", [
             ("energy", "Axial energy", 5.0, 0.01, 1000, 2, 0.5, "eV"),
             ("radius", "Beam radius", 0.3, 0.0, 10, 3, 0.05, "mm"),
             ("angle", "Beam half-angle", 1.0, 0.0, 30, 2, 0.25, "deg"),
         ])
+        # ---- gas: an RF-only collision cell or cooling quadrupole ----
+        self.gas = ParamForm("Collision gas", [
+            ("p", "Pressure (0 = vacuum)", 0.0, 0.0, 1.0, 5, 0.001, "Torr"),
+            ("T", "Gas temperature", 300, 4, 2000, 0, 10, "K"),
+            ("ez", "Axial drag field", 0.0, -1e4, 1e4, 3, 0.1, "V/cm"),
+            ("tmax", "Max flight time (0 = auto)", 0.0, 0.0, 1e3, 3, 0.5, "ms"),
+        ])
+        self.gas_kind = QtWidgets.QComboBox(); self.gas_kind.addItems(list(GASES)); self.gas_kind.setCurrentText("N₂")
+        self.gas.layout().insertRow(1, "Gas", self.gas_kind)
+        self.gas.setToolTip("With gas, every step each ion may hit one gas molecule (hard spheres, cross section "
+                            "from its K0). The axial field pushes ions through when collisions have slowed them.")
+        # ---- stages: start the ions that left a funnel or Device builder model ----
+        from .funnel_tab import FunnelTab
+        from .device_tab import DeviceTab
+        self.picker = SourcePicker(self.ion.layout(), (FunnelTab, DeviceTab), parent=self,
+                                   tip="Start the ions that left another model (an ion funnel or Device builder run "
+                                       "with trajectories) at the rod entrance, ion by ion",
+                                   step_tip="The DC step from that model's exit to the rod axis: it adds this much "
+                                            "axial energy per charge")
+        self.picker.step.setValue(5.0)
+        self.picker.changed.connect(self._apply_src)
         self.mode = QtWidgets.QComboBox(); self.mode.addItems(MODES)
         self.op = ParamForm("Operating point", [
             ("a", "a", 0.20, -1, 1, 4, 0.005, ""),
@@ -91,7 +116,7 @@ class QuadTab(SimTab):
 
         mode_box = QtWidgets.QGroupBox("Run mode")
         QtWidgets.QVBoxLayout(mode_box).addWidget(self.mode)
-        for w in (self.geom, drive, self.rf, self.ion_table, self.ion, mode_box, self.op, self.scan, self.dscan):
+        for w in (self.geom, drive, self.rf, self.ion_table, self.ion, self.gas, mode_box, self.op, self.scan, self.dscan):
             self.form_layout.addWidget(w)
         self.form_layout.addStretch(1)
 
@@ -112,6 +137,42 @@ class QuadTab(SimTab):
         self._fill_drivers()
         self._mode_changed()
         self._draw_stability(None)
+
+    # ---- stages ----
+    def set_sources(self, sources):
+        self.picker.set_sources(sources)
+
+    def source(self):
+        return self.picker.source()
+
+    def source_name(self):
+        return self.picker.source_name()
+
+    def _apply_src(self, *_):
+        """Linked: the ion table lists the species that arrive (with how many), and the beam comes from them."""
+        on = self.picker.linked()
+        for k in ("energy", "radius", "angle"):
+            self.ion.boxes[k].setEnabled(not on)
+        self.ion_table.table.setEnabled(not on)
+        for b in self.ion_table.findChildren(QtWidgets.QPushButton):
+            b.setEnabled(not on)
+        if not on:
+            return
+        name, ex = self.picker.source_name(), self.picker.data()
+        if ex is None:
+            self.picker.set_note(f"Run '{name}' with trajectories: the ions that leave it start here.")
+            return
+        cnt = np.bincount(ex.idx, minlength=len(ex.species))
+        self.ion_table.set_species([IonSpecies(s.name, s.mz, abs(int(s.z)), s.K0, int(c))
+                                    for s, c in zip(ex.species, cnt)])
+        e = 0.5 * np.array([ex.species[k].mz * abs(ex.species[k].z) for k in ex.idx]) * AMU * ex.vel[:, 2] ** 2 \
+            / (np.abs([ex.species[k].z for k in ex.idx]) * E_CHARGE) if ex.n else np.zeros(0)
+        r = np.hypot(ex.pos[:, 0] - ex.center[0], ex.pos[:, 1] - ex.center[1]) * 1e3
+        self.picker.set_note(f"From the {ex.source} of '{name}': {ex.n} ions"
+                             + (f", {np.mean(e):.3g} eV axial per charge at its exit (plus the step), "
+                                f"r_rms {np.sqrt(np.mean(r ** 2)):.3g} mm" if ex.n else "")
+                             + ". They keep their position and side speed; their RF phase is new "
+                               "(no timing from the model before).")
 
     def _ion_values(self):
         """Beam settings plus the reference ion (first row). a and q depend only on m/z, so the
@@ -318,9 +379,20 @@ class QuadTab(SimTab):
         drv = self._driver()
         drv = drv.copy() if drv is not None else None       # the run keeps its own copy
         wiring, ds = self._wiring(), self.dscan.values()
+        gas = dict(self.gas.values(), M=GASES[self.gas_kind.currentText()], name=self.gas_kind.currentText())
+        src = None
+        if self.picker.linked():
+            src = self.picker.data()
+            if src is None or src.n == 0:
+                self.log(f"Input error: no ions from '{self.picker.source_name()}' yet. Run it with trajectories first "
+                         "(Run > Run with the stages before it, F6, runs both).")
+                return
+            src = (src, self.picker.step.value())
+            species = [IonSpecies(s.name, s.mz, abs(int(s.z)), s.K0, 1) for s in src[0].species]
+        self._run_gas, self._run_src = gas, src
 
         def job(progress):
-            out = {"mode": mode, "g": g, "r": r, "i": i}
+            out = {"mode": mode, "g": g, "r": r, "i": i, "gas": gas}
             r0 = g["r0"] * 1e-3
             if key not in cache:
                 t = time.time()
@@ -339,6 +411,7 @@ class QuadTab(SimTab):
             mass, zc = i["mass"], i["z"]
             ref_z = i["ref"].z
             out["species"] = species
+            out["src"] = src
             L = g["length"] * 1e-3
             rng = np.random.default_rng()
 
@@ -356,7 +429,7 @@ class QuadTab(SimTab):
                 else:
                     U, V = o["U"], o["V"]
                 a, q = mathieu.aq(U, V, mass, r0_eff, freq, zc)
-                ions, res = self._fly_species(species, i, field(U, V), dt, L, 1 / freq, 2, rng, progress)
+                ions, res = self._fly_species(species, i, field(U, V), dt, L, 1 / freq, 2, rng, progress, gas, src)
                 out.update(U=U, V=V, a=float(a), q=float(q), res=res, stable=bool(mathieu.is_stable(a, q)))
                 out["aq"] = [tuple(float(x) for x in mathieu.aq(U, V, sp.mz, r0_eff, freq, 1)) for sp in species]
             else:
@@ -376,16 +449,44 @@ class QuadTab(SimTab):
 
         self.start(job, self._show, "Solving field and flying ions..." if key not in cache else "Flying ions...")
 
-    def _fly_species(self, species, i, fld, dt, L, birth, record_every, rng, progress):
+    def _fly_species(self, species, i, fld, dt, L, birth, record_every, rng, progress, gas=None, src=None):
         """Fly every species of the ion table together (ions interleaved, so the recorded
-        paths include each species)."""
-        idx, mz, zc, _ = expand(species)
-        ions = make_beam(len(idx), mz * zc, zc, i["energy"], i["radius"] * 1e-3, i["angle"],
-                         birth_window=birth, rng=rng)
-        v_min = np.sqrt(2 * i["energy"] * E_CHARGE / ((mz * zc).max() * AMU))
-        res = Simulation([fld], z_end=L).run(ions, dt, 3 * L / v_min + birth, record_every=record_every,
-                                             rng=rng, progress=progress)
+        paths include each species). gas: the Collision gas settings (pressure 0 = vacuum).
+        src: (ExitIons, DC step) to start the ions that left the model before instead of a beam."""
+        if src is not None:
+            idx, ions, notes = src[0].entry_ions(src[1], birth_window=birth, rng=rng)
+            if not len(idx):
+                raise ValueError("no ion gets into the rods: " + "; ".join(notes))
+            zc = ions.charge / E_CHARGE
+            mz = ions.mass / AMU / zc
+            v_min = max(float(ions.vel[:, 2].min()), 10.0)
+        else:
+            idx, mz, zc, _ = expand(species)
+            ions = make_beam(len(idx), mz * zc, zc, i["energy"], i["radius"] * 1e-3, i["angle"],
+                             birth_window=birth, rng=rng)
+            v_min = np.sqrt(2 * i["energy"] * E_CHARGE / ((mz * zc).max() * AMU))
+            notes = []
+        fields, hooks, cell = [fld], [], None
+        t_max = 3 * L / v_min + birth
+        if gas and gas["p"] > 0:
+            k0 = np.array([s.K0 for s in species])[idx]
+            cell = HardSphereGas(gas["p"], gas["T"], gas["M"], ccs_from_k0(k0, mz, zc, gas["M"], gas["T"]))
+            hooks.append(cell)
+            K = k0 * 1e-4 * (760 / gas["p"]) * (gas["T"] / 273.15)          # mobility at this pressure, m^2/Vs
+            if gas["ez"] > 0:
+                t_max = max(t_max, 3 * L / (K.min() * gas["ez"] * 100))
+            else:
+                t_max = max(t_max, 2e-3)
+            t_max = min(t_max, 20e-3)
+        if gas and gas["ez"]:
+            fields.append(AxialField(gas["ez"] * 100))
+        if gas and gas["tmax"] > 0:
+            t_max = gas["tmax"] * 1e-3
+        steps = t_max / dt
+        res = Simulation(fields, z_end=L, hooks=hooks).run(ions, dt, t_max, record_every=record_every * max(1, int(steps // 20000)),
+                                                           rng=rng, progress=progress)
         res.species = idx
+        res.cell, res.notes = cell, notes
         return ions, res
 
     def _driver_job(self, out, d, wiring, grid, basis, r0_eff, i, o, ds, species, L, rng, progress):
@@ -403,7 +504,8 @@ class QuadTab(SimTab):
         if out["mode"] == 0:
             mass = i["mass"]
             a, q = mathieu.aq(U, V, mass, r0_eff, f_rf, zc)
-            ions, res = self._fly_species(species, i, fld, dt, L, 1 / f_rf, max(1, int(2 * fmax / f_rf)), rng, progress)
+            ions, res = self._fly_species(species, i, fld, dt, L, 1 / f_rf, max(1, int(2 * fmax / f_rf)), rng, progress,
+                                          out["gas"], out["src"])
             out.update(a=float(a), q=float(q), res=res, stable=bool(mathieu.is_stable(a, q)), mode=0)
             out["aq"] = [tuple(float(x) for x in mathieu.aq(U, V, sp.mz, r0_eff, f_rf, 1)) for sp in species]
             return out
@@ -443,8 +545,23 @@ class QuadTab(SimTab):
             self.last_table = (["ion", "species", "mz", "z", "status(1=through,2=hit)", "t_end_s", "x_m", "y_m", "z_m"],
                                [[k, species[res.species[k]].name, species[res.species[k]].mz, species[res.species[k]].z,
                                  int(res.status[k]), res.t_end[k], *res.final_pos[k]] for k in range(len(res.status))])
-            self.set_exit(ExitIons.from_result(f"quadrupole run at U = {out['U']:.2f} V, V = {out['V']:.2f} V",
-                                               res, species))
+            gas = out["gas"]
+            for note in res.notes:
+                self.log("  Entry: " + note)
+            if res.cell is not None:
+                self.log(f"  Collision gas {gas['name']} at {gas['p']:g} Torr, {gas['T']:g} K"
+                         + (f", axial field {gas['ez']:g} V/cm" if gas["ez"] else ""))
+                for d in species_stats(res, species):
+                    self.log(f"    {d['name']}: " + res.cell.stats.summary(d["mask"]))
+                if res.cell.p_max > 0.2:
+                    self.log(f"  Note: up to {res.cell.p_max:.0%} chance of a collision in one step; raise Steps per "
+                             "RF cycle so steps stay well under one collision")
+                if (res.status <= 0).mean() > 0.2:
+                    self.log(f"  Note: {(res.status <= 0).mean():.0%} still in the rods when the flight ended; "
+                             "add an axial drag field or raise the max flight time")
+            self.set_exit(ExitIons.from_result(f"quadrupole run at U = {out['U']:.2f} V, V = {out['V']:.2f} V"
+                                               + (f" in {gas['p']:g} Torr {gas['name']}" if gas["p"] > 0 else ""),
+                                               res, species, pressure_torr=gas["p"], temp_k=gas["T"]))
             self._draw_traj(out)
             self._draw_stability([(q, a) for a, q in out["aq"]], labels=[sp.name for sp in species])
         else:

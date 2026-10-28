@@ -3,6 +3,8 @@ import numpy as np
 from PySide6 import QtWidgets
 
 from ..inlet import Inlet, InletIon, fly_inlet, DEFAULT_IONS, TORR
+from ..ions import IonSpecies
+from ..stages import ExitGas
 from .common import ParamForm, SimTab
 
 
@@ -45,6 +47,7 @@ class InletTab(SimTab):
             self.form_layout.addWidget(w)
         self.form_layout.addStretch(1)
         self.run_btn.clicked.connect(self.run)
+        self.exit_gas = None        # stages.ExitGas of the last run, for an ion funnel after it
 
     def _add_row(self, name, mz, z, K0):
         r = self.table.rowCount()
@@ -94,6 +97,10 @@ class InletTab(SimTab):
                      f"peak T_eff {d['teff'].max():.0f} K")
             rows.append([i.name, i.mz, i.charge_state, i.K0, d["v_final"], d["ke_final"], d["t_final"], d["teff"].max()])
         self.last_table = (["ion", "mz", "z", "K0", "v_skimmer_m_s", "KE_eV", "transit_s", "Teff_max_K"], rows)
+        self.exit_gas = ExitGas(f"inlet run ({inl.flow_slm:.2f} slm)", inl.flow_slm, inl.p_back, inl.t_atm,
+                                [IonSpecies(d["ion"].name, d["ion"].mz, d["ion"].charge_state, d["ion"].K0, 1) for d in res],
+                                [float(d["v_final"]) for d in res])
+        self.exit_changed.emit()
 
         ax_ = inl.axis
         x = ax_["x"] * 1e3

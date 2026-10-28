@@ -6,8 +6,10 @@ with Run, Stop and progress under it, plot tabs beside it, results text under th
 Several models can be open at once (two funnels, a funnel and a TOF, ...), and the Drivers
 tab at the end holds the electronics they share.
 
-Models are stages: an OA-TOF can take its beam and ion mixture from the ions that left a
-quadrupole, ion funnel or Device builder model (Incoming beam > Ions from).
+Models are stages: an ion funnel can take its gas and ion species from an ESI inlet, a
+quadrupole its ions from a funnel or Device builder, and an OA-TOF its beam from any of those
+(the "... from" row at the top of the model's gas or beam settings). Chained, inlet → funnel →
+quadrupole (gas-filled as a collision cell, or not) → OA-TOF runs in order with F6.
 """
 from PySide6 import QtCore, QtWidgets
 
@@ -25,18 +27,18 @@ APP_NAME = "Ion Sim"
 # template name -> (controller class, one-line description)
 TEMPLATES = {
     "Quadrupole mass filter": (QuadTab, "Round rods with RF + DC or a driver with excitation tones; Mathieu "
-                                        "stability, mass scans, tone ejection."),
+                                        "stability, mass scans, tone ejection. With gas: a collision cell. Can take "
+                                        "its ions from a funnel."),
     "TWAVE traveling wave": (TwaveTab, "Stepped electrode boards in gas: mobility separation, wave-speed sweeps."),
     "FAIMS": (FaimsTab, "Asymmetric waveform across a planar gap at 1 atm: CV spectra and dispersion."),
     "ESI inlet capillary": (InletTab, "Spray region, choked capillary flow and free jet: ion speed and energy."),
     "Ion funnel": (FunnelTab, "Ring, planar or imported CAD funnels in 1-10 Torr: transmission, gas flow, "
-                              "space charge, heating."),
+                              "space charge, heating. Can take its gas and ions from an ESI inlet."),
     "Device builder (DXF / CAD)": (DeviceTab, "Your own drawing or 3D model: click electrodes, wire drivers, "
                                               "solve and fly."),
     "OA-TOF": (TofTab, "Pusher, drift, reflectron and detector: resolution, mass spectra, tuning. Can take its "
                        "ions from a quadrupole, funnel or Device builder model."),
 }
-SOURCES = (QuadTab, FunnelTab, DeviceTab)
 
 
 class Model:
@@ -49,14 +51,12 @@ class Model:
         self._fitted = False
 
     @property
-    def is_source(self):
-        """Its runs leave exit ions that a later stage can take."""
-        return isinstance(self.ctl, SOURCES)
-
-    @property
     def is_stage(self):
-        """It can take its ions from another model."""
-        return isinstance(self.ctl, TofTab)
+        """It can take its ions (or gas) from another model."""
+        return hasattr(self.ctl, "picker")
+
+    def can_take(self, other):
+        return self.is_stage and other is not self and isinstance(other.ctl, self.ctl.picker.accepts)
 
     def fit(self):
         """Give the settings column the width its groups need, so nothing is clipped (once, when first shown)."""
@@ -150,7 +150,7 @@ class Workspace(QtWidgets.QMainWindow):
         self.tabs.insertTab(self.tabs.indexOf(self.drivers), m.ctl, name)
         m.ctl.ran.connect(lambda ok, m=m: self._ran(m, ok))
         if m.is_stage:
-            m.ctl.beam_src.currentIndexChanged.connect(lambda _=0, m=m: self._stage_changed(m))
+            m.ctl.picker.combo.currentIndexChanged.connect(lambda _=0, m=m: self._stage_changed(m))
         self._relink()
         if select:
             self.tabs.setCurrentWidget(m.ctl)
@@ -202,9 +202,8 @@ class Workspace(QtWidgets.QMainWindow):
 
     # ---------- stages ----------
     def link(self, stage, source):
-        """Make `stage` (an OA-TOF model) take its ions from the model named `source`; None sets them by hand."""
-        cb = stage.ctl.beam_src
-        cb.setCurrentIndex(max(cb.findText(f"{source} exit"), 0) if source else 0)
+        """Make `stage` take its ions (or gas) from the model named `source`; None sets them by hand."""
+        stage.ctl.picker.pick(source)
 
     def source_of(self, m):
         name = m.ctl.source_name() if m is not None and m.is_stage else None
@@ -218,9 +217,9 @@ class Workspace(QtWidgets.QMainWindow):
             keep = m.ctl.source_name()
             if renamed and keep == renamed[0]:
                 keep = renamed[1]
-            m.ctl.beam_src.blockSignals(True)
-            m.ctl.set_sources({x.name: x.ctl for x in self.models if x.is_source})
-            m.ctl.beam_src.blockSignals(False)
+            m.ctl.picker.combo.blockSignals(True)
+            m.ctl.picker.set_sources({x.name: x.ctl for x in self.models if m.can_take(x)})
+            m.ctl.picker.combo.blockSignals(False)
             self.link(m, keep)
         for m in self.models:
             self._label(m)
@@ -288,7 +287,7 @@ class Workspace(QtWidgets.QMainWindow):
                 menu.addAction("Run with the stages before it").triggered.connect(lambda: self.run_chain(m))
             if m.is_stage:
                 take = menu.addMenu("Take ions from")
-                for x in [None] + [x for x in self.models if x.is_source]:
+                for x in [None] + [x for x in self.models if m.can_take(x)]:
                     a = take.addAction("Set by hand" if x is None else x.name)
                     a.setCheckable(True); a.setChecked(self.source_of(m) is x)
                     a.triggered.connect(lambda _=False, x=x: self.link(m, x.name if x else None))
@@ -309,9 +308,8 @@ class Workspace(QtWidgets.QMainWindow):
         title.setStyleSheet("font-size: 20px; font-weight: bold;")
         v.addWidget(title)
         sub = QtWidgets.QLabel("Each pick opens a model in its own tab. Several can be open at once, and the Drivers "
-                               "tab holds the electronics they share. An OA-TOF can take its ions from a quadrupole, "
-                               "ion funnel or Device builder model, so models can be chained into the stages of one "
-                               "instrument.")
+                               "tab holds the electronics they share. Models can be chained into the stages of one "
+                               "instrument: ESI inlet → ion funnel → quadrupole (or collision cell) → OA-TOF.")
         sub.setWordWrap(True); v.addWidget(sub); v.addSpacing(12)
         grid = QtWidgets.QGridLayout()
         for i, (tpl, (_, desc)) in enumerate(TEMPLATES.items()):
@@ -394,7 +392,8 @@ class Workspace(QtWidgets.QMainWindow):
             f"<b>{APP_NAME} {VERSION}</b><p>Ion optics and ion mobility simulator.</p>"
             "<p>Pick a device on Home to open it as a tab, set it up and press Run (F5). "
             "The Drivers tab is shared by every model.</p>"
-            "<p>An OA-TOF can take its ions from another model (Incoming beam &gt; Ions from); "
+            "<p>A funnel can take its gas from an inlet, a quadrupole its ions from a funnel, and an OA-TOF its beam "
+            "from either (the “… from” row in their settings); "
             "Run &gt; Run with the stages before it (F6) runs the chain in order.</p>"
             "<p>The window with one fixed tab per device is under View &gt; Classic tabs window.</p>")
 

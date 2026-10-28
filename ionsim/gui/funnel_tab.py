@@ -12,6 +12,7 @@ from ..cad import load_bodies, FILE_FILTER, UNITS
 from ..twave import mobility
 from ..stages import ExitIons
 from .common import ParamForm, SimTab
+from .stage_picker import SourcePicker
 from .electrode_view import ElectrodeView, INSULATOR
 from .heating_view import HeatingBox, draw_heating
 from .ion_table import IonTable, species_color, path_style, fate_caption, species_legend, species_stats
@@ -101,6 +102,12 @@ class FunnelTab(SimTab):
                              "other open side (between electrodes, through the exit), scaled to the throughput")
         self.gas.layout().insertRow(2, "Gas flow", self.flow)
         self.flow.currentIndexChanged.connect(self._flow_changed)
+        from .inlet_tab import InletTab
+        self.picker = SourcePicker(self.gas.layout(), (InletTab,), attr="exit_gas", label="Gas and ions from",
+                                   step=False, parent=self,
+                                   tip="Take the pressure, the gas throughput and the ion species from an ESI inlet "
+                                       "model (its first vacuum stage is this funnel)")
+        self.picker.changed.connect(self._apply_src)
         self.space = ParamForm("Space charge", [
             ("I", "Ion current (0 = off)", 0.0, 0, 1e6, 3, 1, "nA"),
             ("it", "Iterations", 4, 1, 30, 0, 1, ""),
@@ -351,6 +358,42 @@ class FunnelTab(SimTab):
         self.elec.boxes["guard"].setEnabled(k == 1)
         self.ions.set("r0", {0: 8.0, 1: 1.5, 2: self.ions.values()["r0"]}[k])
         self._preview()
+
+    # ---------- stages ----------
+    def set_sources(self, sources):
+        self.picker.set_sources(sources)
+
+    def source(self):
+        return self.picker.source()
+
+    def source_name(self):
+        return self.picker.source_name()
+
+    def _apply_src(self, *_):
+        """Linked to an ESI inlet: its first vacuum stage pressure and throughput, and its ion species."""
+        on = self.picker.linked()
+        for k in ("p", "slm"):
+            self.gas.boxes[k].setEnabled(not on)
+        if not on:
+            return
+        name, g = self.picker.source_name(), self.picker.data()
+        if g is None:
+            self.picker.set_note(f"Run '{name}': its first vacuum stage pressure, gas throughput and ion species "
+                                 "fill in here.")
+            return
+        self.gas.set("p", g.pressure_torr); self.gas.set("slm", g.slm)
+        try:
+            n = self.ion_table.first().n
+        except ValueError:
+            n = 200
+        self.ion_table.set_species([IonSpecies(sp.name, sp.mz, sp.z, sp.K0, n) for sp in g.species])
+        if self.flow.currentIndex() != 2 and not getattr(self, "_flow_set", False):
+            self._flow_set = True
+            self.flow.setCurrentIndex(2)
+        self.picker.set_note(f"From '{name}': {g.slm:.3g} slm into {g.pressure_torr:g} Torr, "
+                             f"{len(g.species)} ion species (speeds at the skimmer "
+                             + ", ".join(f"{v:.0f}" for v in g.speed) + " m/s, forgotten within a few µs at this "
+                             "pressure). The throughput sets the gas flow only with Gas flow = flow field.")
 
     def _flow_changed(self, *_):
         k = self.flow.currentIndex()

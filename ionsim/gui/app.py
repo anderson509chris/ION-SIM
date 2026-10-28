@@ -33,6 +33,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self.device, "Device builder (DXF / CAD)")
         self.tabs.addTab(self.tof, "OA-TOF")
         self.tabs.addTab(self.drivers, "Drivers")
+        self.funnel.set_sources({"ESI inlet": self.inlet})
+        self.quad.set_sources({"Ion funnel": self.funnel, "Device builder": self.device})
         self.tof.set_sources({"Quadrupole": self.quad, "Ion funnel": self.funnel, "Device builder": self.device})
         self.setCentralWidget(self.tabs)
 

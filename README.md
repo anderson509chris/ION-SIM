@@ -68,12 +68,17 @@ PyInstaller can only build for the operating system it runs on, which is why the
 The app opens on **Home**, a start page listing every device. Each pick opens a **model** in its own tab, laid out like the classic tabs: settings in one scrolling column with **Run**, **Stop** and progress under it, the plot tabs on the right and the results text under the plots. Several models can be open at once (two funnels, a funnel and a TOF, …); the **Drivers** tab at the end holds the electronics they share.
 
 * **Tabs.** Double-click a model's tab to rename it, close it with its ×, drag tabs to reorder them, and right-click a tab to run, rename or close it. The open models, and which model feeds which, come back the next time the app starts; Home lists them under **Open models**.
-* **Stages.** An OA-TOF model can take its ions from a quadrupole, ion funnel or Device builder model: set **Incoming beam > Ions from** (or right-click the TOF's tab > **Take ions from**). The ions that left the other model in its last trajectory run then set the beam energy and spread, the beam size, the divergence and the ion mixture (scaled so the most abundant species has 2000 ions; with ion heating on, only the share that survives intact counts). **energy added on the way in** is the DC step from that model's last electrode to the pusher. The tab shows the link as *OA-TOF ← Ion funnel*, and **Run > Run with the stages before it** (F6) runs the chain in order.
+* **Stages.** Models chain into one instrument, **ESI inlet → ion funnel → quadrupole (or collision cell) → OA-TOF**, by a "… from" row at the top of a model's gas or beam settings (or right-click its tab > **Take ions from**):
+  * an **ion funnel** takes its pressure, gas throughput and ion species from an ESI inlet (**Gas > Gas and ions from**), and switches to the flow-field gas model the first time;
+  * a **quadrupole** takes the ions that left a funnel or Device builder model, ion by ion (**Beam > Ions from**): each keeps its position and side speed and gains **energy added on the way in**, the DC step to the rods (ions broken up by heating are dropped; their RF phase is new);
+  * an **OA-TOF** takes its beam (energy and spread, size, divergence) and ion mixture from a quadrupole, funnel or Device builder exit (**Incoming beam > Ions from**; scaled so the most abundant species has 2000 ions).
+
+  Each model reads the last run of the one before it, and the tab shows the link (*OA-TOF ← Collision cell*). **Run > Run with the stages before it** (F6) runs the whole chain in order.
 * **Run** (F5) runs the model in front, **Stop** (Shift+F5) stops it.
 
 Runs happen in the background. Every plot can be zoomed, panned and saved (**File > Save current plot**), and **File > Export results (CSV)** writes the selected model's numbers out. The earlier one-tab-per-device window is still there: **View > Classic tabs window**, or `python ion_sim_app.py --classic`; there the OA-TOF tab can take its ions from the Quadrupole, Ion funnel or Device builder tab the same way. The sections below describe each device.
 
-| Home | OA-TOF fed by an ion funnel, after Run with the stages before it |
+| Home | OA-TOF at the end of inlet → funnel → collision cell, after Run with the stages before it |
 |---|---|
 | ![Home](docs/screenshots/workspace_add_model.png) | ![Workspace](docs/screenshots/workspace.png) |
 
@@ -82,6 +87,12 @@ Runs happen in the background. Every plot can be zoomed, panned and saved (**Fil
 ### Quadrupole mass filter
 
 Rod geometry, RF frequency, ions, beam and operating point (a, q or U, V, kept in sync, set for the first ion in the table). It runs either a single operating point, with every ion's own (a, q) marked on the stability diagram, or a full mass scan. Plot tabs: Potential, Trajectories, Cross-section, Stability, Mass scan and Excitation.
+
+**Collision gas** turns the rods into a collision cell or cooling quadrupole: pressure (0 = vacuum), gas (He, N₂, Ar), temperature, an **axial drag field** (V/cm) that pushes slowed ions through, and a max flight time. Each ion's cross section comes from its K0 in the ion table. The log gives, per species, the collisions per ion and the centre-of-mass energy of the first and hardest collision (the CID energy), and warns when steps are too long for the collision rate or ions are still in the rods at the end. Trajectory runs use the gas; mass and excitation scans fly in vacuum.
+
+| Collision cell: funnel ions into 0.01 Torr N₂, 0.5 V/cm drag field |
+|---|
+| ![Collision cell](docs/screenshots/quad_collision_cell.png) |
 
 Under **Drive**, pick a driver from the Drivers tab instead of the built-in RF/DC, and choose which output goes on each rod (x+, x−, y+, y−). The tab then works out the excitation type from the tone signs on the rods: tones added with the RF (+ on one pair, − on the other) are quadrupolar and eject at twice the secular frequency; tones across one rod pair are dipolar and eject at the secular frequency. It lists the m/z each tone hits, and **Aim tone k at m/z** sets a tone's frequency for you. **Transmission vs m/z (excitation scan)** flies a log-spaced m/z range (plus every predicted notch) and plots the notches with the tone resonances marked (with 8 tones close together, their notches and weaker side resonances overlap into a broad rejection band, as in the example); the **Excitation** plot shows the secular frequencies against m/z with the tones drawn across them, so crossings are the ejected masses.
 
@@ -337,6 +348,12 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * **Grids:** flat boards and 3D CAD use the 3D voxel grid; profiles use the axisymmetric grid; 2D cross-sections use a planar 2D grid. Interiors are painted first, then outlines, so neighbors never steal each other's nodes.
 * **Flight:** the same Langevin integrator as the funnel. The time step is picked from the RF period, the TWAVE step time and the device length, and flight time from the expected drift.
 
+### Collision cell (`ionsim/collisions.py`)
+
+* **Collisions:** after each RK4 step each ion meets a gas molecule with P = 1 − exp(−n σ g dt), where g is its speed relative to a molecule drawn from the thermal gas. A hit is an elastic hard-sphere collision: in the centre-of-mass frame the relative velocity keeps its size and turns to a random direction. This one-collision-at-a-time model fits 10⁻⁴ to 10⁻¹ Torr, where the smooth drag of the funnel model (many collisions per step) no longer holds.
+* **Cross section:** from the ion's reduced mobility, Mason–Schamp: Ω = 3ze / (16 N₀ K₀) · √(2π / μkT). The same K0 that sets the drift in a funnel sets the collision rate here.
+* **Drag field:** a uniform E_z added to the rod field.
+
 ### OA-TOF (`ionsim/tof.py`)
 
 * **Geometry:** planes along the flight axis x: pusher plate, puller grid, drift grid, detector, reflectron entrance, stage 1 grid and back plate. Every gap is bounded by ideal grids, so its field is uniform along x and only changes in time (the pulse). Ions keep their z and y velocity, which sets the drift angle and where they land on the detector.
@@ -445,7 +462,8 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 
 **Quadrupole, not modelled yet**
 * 2D field only: no fringe fields at the rod entrance and exit (a 3D grid is the obvious next field upgrade).
-* No space charge and no gas.
+* No space charge. The axial drag field is uniform (no segmented-rod or auxiliary-electrode solve yet).
+* Collisions are elastic hard spheres with a cross section from K0 (Mason–Schamp): no ion–induced-dipole (Langevin) capture, and no internal energy taken up in a collision. A run at 0.5 Torr N₂ settles at the gas temperature (301 K for 300 K) and drifts about 6% faster than K·E, the known first-order error of Mason–Schamp for hard spheres.
 * Pure NumPy. Numba on `efield`/RK4 would give a large speed-up as ion counts grow.
 
 **TWAVE, not modelled yet**
@@ -468,20 +486,16 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 
 **Ion heating, not modelled yet**
 * The internal temperature follows a single relaxation time, not a full energy-transfer model, and ions have no internal-energy distribution (all ions in a bin share one T_int). Use the numbers to compare devices, regions and settings, and treat absolute fragmentation yields as estimates that depend on your Ea and A.
-* The quadrupole tab flies in vacuum, so tone excitation there ejects ions but does not heat them; collisional activation in a gas-filled quad comes with the drag-field quad below.
+* In a gas-filled quadrupole the log gives collision counts and centre-of-mass energies, not an internal temperature or survival; tone excitation in vacuum ejects ions but does not heat them.
 
 **OA-TOF, not modelled yet**
 * Ideal grids: no field penetration through the meshes, no fringe fields at the plate edges, no grid scattering. Gridless reflectrons need a real field solve (the Device builder can do the field; flying a pulsed vacuum TOF there is the next step).
 * No space charge in the pushed packet, no metastable decay, no detector dead time or saturation.
 * The beam in the pusher is generated from its size and divergence, which can be measured from an upstream model's exit ions (Stages). Between that exit and the pusher the ions only gain the DC step you set: no collisions, no transfer optics, no time structure from the upstream run. Ions leaving a gas-filled stage are taken as they leave it.
 
-**Next: drag-field quadrupole (collision cell).** The integrator already has the three hooks this needs:
-
-1. **Axial drag field:** a new `FieldSource` that adds E_z(z) (from segmented rods, tilted or tapered auxiliary electrodes, or a resistive coating). For segmented rods, solve an axial 1D/3D problem and add a DC ramp per segment.
-2. **Gas collisions:** a `hooks` entry that applies, per step, a collision probability P = 1 − exp(−n σ v_rel dt) with a hard-sphere (or Langevin) cross section, and a centre-of-mass random scatter against a thermal gas atom (He, N₂ or Ar at a set pressure and temperature).
-3. **Optional viscous drag shortcut:** a `forces` entry with mobility K, a = (q/m)E − v/τ, which is fast at high pressure.
-
-Outputs to add then: transit-time distributions, energy thermalisation, CID energy, and transmission vs pressure.
+**Stages, not modelled yet**
+* Between two stages ions only gain the DC step you set: no transfer optics, no collisions in the gap, and no time structure (a quadrupole gives each arriving ion a new RF phase; the OA-TOF uses a continuous beam).
+* The ESI inlet hands on its gas (pressure, throughput) and ion species, not ion positions: the inlet model is 1D, and in a 1–2 Torr funnel the ions forget their skimmer speed within microseconds.
 
 ---
 
@@ -513,7 +527,8 @@ ION-SIM/
 │   ├── drivers.py          # electronics: outputs, RF, TWAVE gates, excitation tones, library
 │   ├── heating.py          # effective / internal ion temperature, fragmentation estimate
 │   ├── tof.py              # OA-TOF: pusher pulse, reflectron, exact gap-by-gap flight, resolution
-│   ├── stages.py           # stages: one model's exit ions become the next model's beam
+│   ├── stages.py           # stages: one model's exit ions (or the inlet's gas) start the next model
+│   ├── collisions.py       # collision cell: hard-sphere gas collisions, axial drag field
 │   └── gui/                # PySide6 app: workspace.py (Home, one tab per model), one controller per device
 │                           #   (the *_tab.py files, also the classic tabbed window), shared widgets,
 │                           #   device_tab.py and electrode_view.py (clickable electrodes),

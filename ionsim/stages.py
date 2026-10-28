@@ -1,14 +1,18 @@
 """Stages: one model's exit ions become the next model's starting ions.
 
 A model that flies ions (quadrupole, ion funnel, Device builder) keeps the ions that left
-through its exit as an ExitIons. The next stage reads it: the OA-TOF turns it into the
-beam in its pusher (energy, energy spread, size, divergence) and its ion mixture.
+through its exit as an ExitIons. The next stage reads it: a quadrupole starts those same
+ions at its entrance (entry_ions), and the OA-TOF turns them into the beam in its pusher
+(energy, energy spread, size, divergence) and its ion mixture (tof_beam).
+
+The ESI inlet hands on gas instead (ExitGas): the gas flow and pressure it delivers to the
+first vacuum stage, and its ion species, which an ion funnel takes as its gas and ions.
 """
 import numpy as np
 from dataclasses import dataclass
 
 from .constants import AMU, E_CHARGE
-from .ions import IonSpecies
+from .ions import IonSpecies, Ion
 
 
 @dataclass
@@ -56,6 +60,30 @@ class ExitIons:
         intact = np.bincount(self.idx, weights=w, minlength=len(self.species))
         return [(int(c), float(i), float(i / f) if f else 0.0) for c, i, f in zip(cnt, intact, self.flown)]
 
+    def entry_ions(self, accel_v, birth_window=0.0, rng=None):
+        """These ions at the entrance (z = 0, on the axis the next model uses) after a DC step of
+        accel_v volts that pushes them along z. Ions that did not survive the heating are dropped
+        (each with its chance of breaking up), and so are ions the step turns back.
+        Returns (species index per ion, Ion, notes)."""
+        rng = rng or np.random.default_rng()
+        keep = rng.random(self.n) < self.weights()
+        mz = np.array([s.mz for s in self.species])[self.idx]
+        zc = np.abs(np.array([s.z for s in self.species], float))[self.idx]
+        m, q = mz * zc * AMU, zc * E_CHARGE
+        vel = self.vel.copy()
+        ez = 0.5 * m * np.maximum(vel[:, 2], 0) ** 2 + q * accel_v
+        through = ez > 0
+        vel[:, 2] = np.sqrt(np.maximum(ez, 0) * 2 / m)
+        k = keep & through
+        pos = np.c_[self.pos[:, 0] - self.center[0], self.pos[:, 1] - self.center[1], np.zeros(self.n)]
+        ions = Ion(pos[k], vel[k], m[k], q[k], birth_window * rng.random(int(k.sum())))
+        notes = []
+        if (~keep).any():
+            notes.append(f"{int((~keep).sum())} broke up on the way (ion heating)")
+        if (keep & ~through).any():
+            notes.append(f"{int((keep & ~through).sum())} turned back by the {accel_v:g} V step")
+        return self.idx[k], ions, notes
+
     def tof_beam(self, accel_v, n_ref=2000):
         """The OA-TOF pusher beam these ions make after a DC step of accel_v volts (per charge)
         between the exit and the pusher. Returns (beam settings dict in the TOF tab's units,
@@ -96,3 +124,14 @@ class ExitIons:
             notes.append(f"left at {self.pressure_torr:g} Torr with {np.average(e_exit, weights=w):.3g} eV axial energy "
                          "per charge; collisions on the way to the pusher are not modelled")
         return beam, species, notes
+
+
+@dataclass
+class ExitGas:
+    """What an ESI inlet delivers to the first vacuum stage: its gas and its ion species."""
+    source: str
+    slm: float                  # gas throughput, standard L/min
+    pressure_torr: float        # first vacuum stage pressure
+    temp_k: float               # room temperature (the throughput is counted at standard conditions)
+    species: list               # IonSpecies (name, m/z, z, K0)
+    speed: list                 # each species' speed at the skimmer, m/s

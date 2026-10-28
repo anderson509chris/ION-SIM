@@ -224,4 +224,38 @@ q1, tof = ws2.models
 q1.ctl.set_exit(ex)
 check("stage link", ws2.source_of(tof) is q1 and abs(tof.ctl.beam.values()["e"] - 15.0) < 0.01
       and "Q1" in ws2.tabs.tabText(ws2.tabs.indexOf(tof.ctl)), ws2.tabs.tabText(ws2.tabs.indexOf(tof.ctl)))
+# collision cell: hard-sphere gas thermalises ions and gives the K0 drift it was built from
+from ionsim.collisions import HardSphereGas, AxialField, ccs_from_k0, GASES
+from ionsim.integrator import Simulation
+from ionsim.ions import Ion
+from ionsim.constants import AMU, E_CHARGE, K_B
+n_hs, m_hs, T_hs = 200, 500 * AMU, 300.0
+sig = ccs_from_k0(np.full(n_hs, 1.0), 500, 1, GASES["N₂"], T_hs)
+gas = HardSphereGas(0.5, T_hs, GASES["N₂"], sig)
+rate = gas.n * sig[0] * 400
+ions = Ion(np.zeros((n_hs, 3)), np.sqrt(K_B * T_hs / m_hs) * rng.standard_normal((n_hs, 3)), np.full(n_hs, m_hs),
+           np.full(n_hs, E_CHARGE))
+vz_hs, ke_hs = [], []
+def _rec(t, dt, ions_, s, rng_):
+    if t > 500 / rate:
+        vz_hs.append(ions_.vel[:, 2].mean()); ke_hs.append((0.5 * m_hs * (ions_.vel[:, :2] ** 2).sum(1)).mean())
+Simulation([AxialField(150.0)], z_end=1e9, hooks=[gas, _rec]).run(ions, 0.05 / rate, 2000 / rate, rng=rng)
+K_hs = 1e-4 * 760 / 0.5 * T_hs / 273.15
+check("collision cell gas", abs(np.mean(ke_hs) / K_B / T_hs - 1) < 0.05 and abs(np.mean(vz_hs) / (K_hs * 150) - 1) < 0.15,
+      f"T {np.mean(ke_hs) / K_B:.0f} K vs {T_hs:.0f} K, drift {np.mean(vz_hs):.2f} vs K E {K_hs * 150:.2f} m/s")
+
+# the full chain: inlet gas into a funnel, funnel ions into a quadrupole, quadrupole ions into the TOF
+from ionsim.stages import ExitGas
+ws3 = Workspace(models=[("ESI inlet capillary", "In"), ("Ion funnel", "F", "In"), ("Quadrupole mass filter", "Q", "F"),
+                        ("OA-TOF", "T", "Q")], persist=False)
+inl3, f3, q3, t3 = ws3.models
+inl3.ctl.exit_gas = ExitGas("test", 0.8, 1.5, 298, [IonSpecies("a", 200, 1, 1.4, 1), IonSpecies("b", 500, 1, 1.0, 1)],
+                            [1600.0, 1500.0])
+inl3.ctl.exit_changed.emit()
+f3.ctl.set_exit(ex)
+idx_e, ions_e, _ = ex.entry_ions(5.0, rng=rng)
+check("stage chain", [ws3.source_of(m).name if ws3.source_of(m) else None for m in ws3.models] == [None, "In", "F", "Q"]
+      and f3.ctl.gas.values()["p"] == 1.5 and len(f3.ctl.ion_table.species()) == 2
+      and len(q3.ctl.ion_table.species()) == 2 and len(idx_e) == ex.n and abs(ions_e.pos[:, 2]).max() == 0,
+      " → ".join(m.name for m in ws3.models))
 print(f"all good in {time.time() - t0:.0f} s")
