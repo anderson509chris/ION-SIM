@@ -16,6 +16,7 @@ import os
 from PySide6 import QtCore, QtWidgets
 
 from ..drivers import LIBRARY_PATH, Driver
+from .. import plugins
 from . import settings_io
 
 from .quad_tab import QuadTab
@@ -50,6 +51,10 @@ TEMPLATES = {
 }
 
 
+BUILTIN = list(TEMPLATES)
+PLUGIN_FILES = {}           # model name -> the plugin file it came from (models loaded from your folders)
+
+
 class Model:
     """One device simulation in the workspace: a name, its template and its controller (the device's tab)."""
 
@@ -81,9 +86,10 @@ class Model:
 
 
 class Workspace(QtWidgets.QMainWindow):
-    def __init__(self, models=None, persist=True):
+    def __init__(self, models=None, persist=True, plugin_folders=None):
         """models: [(template, name or None)] or [(template, name, ions from)] to open; None reopens the
         last session's models. persist: remember the open models for next time (off for tests and screenshots).
+        plugin_folders: folders of your own models to load (None: the ones loaded last time, when persist).
         The window always opens on Home."""
         super().__init__()
         self.persist = persist
@@ -92,6 +98,10 @@ class Workspace(QtWidgets.QMainWindow):
         self.models = []
         self.settings = QtCore.QSettings("IonSim", "IonSim")
         self._chain = self._chain_now = None        # Run with the stages before it: models still to run, the one running
+        if plugin_folders is None:
+            plugin_folders = self._saved_folders() if persist else []
+        self.plugin_folders = []
+        self.plugin_errors = self._load_plugins(plugin_folders, quiet=True)
 
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.setTabsClosable(True)
@@ -103,6 +113,7 @@ class Workspace(QtWidgets.QMainWindow):
         bar.customContextMenuRequested.connect(self._tab_menu)
         bar.tabBarDoubleClicked.connect(lambda i: self._rename(self._model_at(i)))
         self.home = self._start_page()
+        self._fill_templates()
         self.instrument = InstrumentTab(TEMPLATES)
         self.instrument.make_models.connect(self.make_stages)
         self.drivers = DriversTab()
@@ -153,8 +164,8 @@ class Workspace(QtWidgets.QMainWindow):
         act = m.addAction("Save setup as…"); act.triggered.connect(lambda: self.save_setup(ask=True))
         m.addSeparator()
         add = m.addMenu("Add model")
-        for tpl in TEMPLATES:
-            add.addAction(tpl).triggered.connect(lambda _=False, t=tpl: self.add_model(t))
+        add.aboutToShow.connect(lambda menu=add: self._fill_add_menu(menu))
+        self._fill_add_menu(add)
         act = m.addAction("Rename model…"); act.triggered.connect(lambda: self._rename(self._current_model()))
         act = m.addAction("Close model"); act.setShortcut("Ctrl+W"); act.triggered.connect(lambda: self._remove(self._current_model()))
         m.addSeparator()
@@ -167,6 +178,9 @@ class Workspace(QtWidgets.QMainWindow):
         act = r.addAction("Run with the stages before it"); act.setShortcut("F6")
         act.triggered.connect(lambda: self.run_chain(self._current_model()))
         act = r.addAction("Stop"); act.setShortcut("Shift+F5"); act.triggered.connect(self.stop_current)
+        pm = self.menuBar().addMenu("&Models")
+        pm.addAction("Load models folder…").triggered.connect(self.choose_plugin_folder)
+        pm.addAction("Don't load my folders at start").triggered.connect(self.forget_plugin_folders)
         v = self.menuBar().addMenu("&View")
         v.addAction("Classic tabs window…").triggered.connect(self._classic)
         h = self.menuBar().addMenu("&Help")
@@ -266,8 +280,10 @@ class Workspace(QtWidgets.QMainWindow):
         for m in list(self.models):
             self._drop(m)
         rows = [r for r in d.get("models", []) if r.get("template") in TEMPLATES]
+        missing = [r for r in d.get("models", []) if r.get("template") not in TEMPLATES]
         self._open_rows([(r["template"], r["name"], r.get("ions_from")) for r in rows])
-        notes = []
+        notes = [f"'{r.get('name')}' needs the model '{r.get('template')}': load the folder it is in "
+                 "(Models > Load models folder…) and open the setup again" for r in missing]
         for m, r in zip(self.models, rows):
             if isinstance(m.ctl, DeviceTab):
                 if r.get("device"):
@@ -543,15 +559,15 @@ class Workspace(QtWidgets.QMainWindow):
                                "model of the whole instrument, use the Instrument tab: tag its parts and it opens the "
                                "linked models for you.")
         sub.setWordWrap(True); v.addWidget(sub); v.addSpacing(12)
-        grid = QtWidgets.QGridLayout()
-        for i, (tpl, (_, desc)) in enumerate(TEMPLATES.items()):
-            b = QtWidgets.QPushButton(tpl); b.setMinimumHeight(44)
-            b.setStyleSheet("text-align: left; padding: 6px 12px; font-weight: bold;")
-            b.clicked.connect(lambda _=False, t=tpl: self.add_model(t))
-            lab = QtWidgets.QLabel(desc); lab.setWordWrap(True)
-            grid.addWidget(b, i, 0); grid.addWidget(lab, i, 1)
-        grid.setColumnStretch(1, 1)
-        v.addLayout(grid)
+        self.template_grid = QtWidgets.QGridLayout()
+        self.template_grid.setColumnStretch(1, 1)
+        v.addLayout(self.template_grid)
+        self.plugin_row = QtWidgets.QHBoxLayout()
+        self.plugin_label = QtWidgets.QLabel(""); self.plugin_label.setWordWrap(True)
+        b = QtWidgets.QPushButton("Load models folder…"); b.clicked.connect(self.choose_plugin_folder)
+        b.setToolTip("Your own models, kept in a folder of your own (they never need to be in this repository)")
+        self.plugin_row.addWidget(b); self.plugin_row.addWidget(self.plugin_label, 1)
+        v.addSpacing(8); v.addLayout(self.plugin_row)
         v.addSpacing(16)
         self.open_title = QtWidgets.QLabel("Open models")
         self.open_title.setStyleSheet("font-size: 15px; font-weight: bold;")
@@ -560,6 +576,86 @@ class Workspace(QtWidgets.QMainWindow):
         v.addLayout(self.open_row)
         v.addStretch(1)
         return w
+
+    def _fill_templates(self):
+        """The model buttons on Home: the built-in models, then the ones loaded from your folders."""
+        g = self.template_grid
+        while g.count():
+            it = g.takeAt(0)
+            if it.widget():
+                it.widget().hide(); it.widget().setParent(None)
+        row = 0
+        for tpl, (_, desc) in TEMPLATES.items():
+            if row == len(BUILTIN) and len(TEMPLATES) > len(BUILTIN):
+                lab = QtWidgets.QLabel("Your models")
+                lab.setStyleSheet("font-size: 15px; font-weight: bold; padding-top: 8px;")
+                g.addWidget(lab, row, 0, 1, 2); row += 1
+            b = QtWidgets.QPushButton(tpl); b.setMinimumHeight(44)
+            b.setStyleSheet("text-align: left; padding: 6px 12px; font-weight: bold;")
+            b.clicked.connect(lambda _=False, t=tpl: self.add_model(t))
+            text = desc + (f"<br><small>{PLUGIN_FILES[tpl]}</small>" if tpl in PLUGIN_FILES else "")
+            lab = QtWidgets.QLabel(text); lab.setWordWrap(True)
+            g.addWidget(b, row, 0); g.addWidget(lab, row, 1)
+            row += 1
+        self.plugin_label.setText(("Models folders: " + "; ".join(self.plugin_folders)) if self.plugin_folders else
+                                  "Keep your own models in a folder of yours and load it here.")
+        if hasattr(self, "instrument"):
+            self.instrument.set_templates(TEMPLATES)
+
+    # ---------- your own models (plugins) ----------
+    def _saved_folders(self):
+        raw = self.settings.value("plugins/folders", "")
+        return [f for f in str(raw).split("\n") if f.strip()]
+
+    def _load_plugins(self, folders, quiet=False):
+        """Load the models in these folders (added to the ones loaded already). Returns [(file, error)]."""
+        new = [os.path.abspath(f) for f in folders if os.path.abspath(f) not in self.plugin_folders]
+        models, errors = plugins.load_folders(new, taken=set(TEMPLATES))
+        for name, (cls, desc, path) in models.items():
+            TEMPLATES[name] = (cls, desc)
+            PLUGIN_FILES[name] = path
+        self.plugin_folders += [f for f in new if os.path.isdir(f)]
+        if errors and not quiet:
+            self._plugin_report(errors)
+        return errors
+
+    def _plugin_report(self, errors):
+        text = "\n\n".join(f"{path}:\n{msg}" for path, msg in errors)
+        if QtWidgets.QApplication.platformName() == "offscreen":
+            print(text)
+            return
+        box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Warning, APP_NAME, "Some models could not be loaded.",
+                                    parent=self)
+        box.setDetailedText(text); box.setModal(False); box.show()
+
+    def load_plugin_folder(self, folder):
+        """Load the models in a folder now, and every time the app starts."""
+        before = set(TEMPLATES)
+        errors = self._load_plugins([folder])
+        added = [t for t in TEMPLATES if t not in before]
+        if self.persist:
+            self.settings.setValue("plugins/folders", "\n".join(self.plugin_folders))
+        self._fill_templates()
+        self.statusBar().showMessage((f"Loaded {', '.join(added)}" if added else "No new models in that folder "
+                                      f"(plugin files end in {plugins.SUFFIX})") + (f"; {len(errors)} problem(s)"
+                                                                                    if errors else ""), 10000)
+        return added, errors
+
+    def choose_plugin_folder(self):
+        f = QtWidgets.QFileDialog.getExistingDirectory(self, "Folder with your models",
+                                                       self.plugin_folders[-1] if self.plugin_folders else "")
+        if f:
+            self.load_plugin_folder(f)
+
+    def forget_plugin_folders(self):
+        """Stop loading your folders at start (models already open stay until the app closes)."""
+        self.settings.setValue("plugins/folders", "")
+        self.statusBar().showMessage("Your models folders will not be loaded next time", 8000)
+
+    def _fill_add_menu(self, menu):
+        menu.clear()
+        for tpl in TEMPLATES:
+            menu.addAction(tpl).triggered.connect(lambda _=False, t=tpl: self.add_model(t))
 
     def _fill_open(self):
         """Home lists the open models, so the last session's work is one click away."""

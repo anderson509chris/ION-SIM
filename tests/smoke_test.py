@@ -463,6 +463,39 @@ e6 = sw6.column("In: m/z 500 energy at skimmer (eV)")
 check("sweeps tab", len(sw6.data["results"]) == 3 and e6[1] < e6[0] < e6[2] and w6.value() == v6
       and d_moved == d_before + 1.0 and sw6.get(dk) == d_before and len(sw6.last_table[1]) == 3,
       f"energy at the skimmer {e6[1]:.2f} / {e6[0]:.2f} / {e6[2]:.2f} eV for {v6 / 2:g} / {v6:g} / {v6 * 2:g} V")
+# your own models from a folder: a plugin file adds a model to Home, opens, runs, and a broken one is reported
+plug_dir = tempfile.mkdtemp()
+os.makedirs(os.path.join(plug_dir, "mine"))
+with open(os.path.join(plug_dir, "mine", "helper.py"), "w") as fh:
+    fh.write("VALUE = 42\n")
+with open(os.path.join(plug_dir, "mine", "demo_plugin.py"), "w") as fh:
+    fh.write("from ionsim.gui.common import SimTab\nfrom ionsim.gui.common import ParamForm\nimport helper\n"
+             "class DemoTab(SimTab):\n"
+             "    def __init__(self, parent=None):\n"
+             "        super().__init__(['Result'], parent)\n"
+             "        self.form = ParamForm('Demo', [('x', 'Value', 1.0, 0, 100, 2, 1, 'V')])\n"
+             "        self.form_layout.addWidget(self.form)\n"
+             "        self.run_btn.clicked.connect(lambda: self.start(lambda p: helper.VALUE * self.form.values()['x'], self._show))\n"
+             "    def _show(self, v):\n"
+             "        self.metrics = {'value': v}\n"
+             "MODELS = {'Demo private model': (DemoTab, 'A model from a folder')}\n")
+with open(os.path.join(plug_dir, "broken_plugin.py"), "w") as fh:
+    fh.write("import not_a_module_anywhere\n")
+ws7 = Workspace(models=[], persist=False, plugin_folders=[plug_dir])
+m7 = ws7.add_model("Demo private model")
+m7.ctl.form.set("x", 2.0); m7.ctl.run_btn.click()
+t_pl = time.time()
+while m7.ctl._thread is not None and time.time() - t_pl < 30:
+    app.processEvents(); time.sleep(0.01)
+app.processEvents()
+setup7 = ws7.setup_state()
+setup7["models"].append({"template": "Model nobody loaded", "name": "Gone", "settings": {}})
+ws8 = Workspace(models=[], persist=False, plugin_folders=[])
+notes7 = ws8.apply_setup(setup7, quiet=True)
+check("models from your folder", m7.ctl.metrics == {"value": 84.0} and len(ws7.plugin_errors) == 1
+      and "broken_plugin" in ws7.plugin_errors[0][0] and "Demo private model" in ws7.instrument.templates
+      and [m.template for m in ws8.models] == ["Demo private model"] and any("Model nobody loaded" in n for n in notes7),
+      f"loaded {list(TEMPLATES)[-1]!r}, broken plugin reported, setup note: {notes7[0][:40]}…")
 # instrument tab: tag the parts of one STEP, get linked models in order along the ion path
 ws5 = Workspace(models=[], persist=False)
 it = ws5.instrument

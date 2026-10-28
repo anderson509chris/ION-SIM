@@ -30,6 +30,15 @@ class InstrumentTab(QtWidgets.QWidget):
     make_models = QtCore.Signal(list)       # [(template, stage name, (z0, z1) in mm)] in order along the ion path
     changed = QtCore.Signal()               # tags or the file changed (the workspace saves them)
 
+    def set_templates(self, templates):
+        """The models a part can be (the built-in ones and any loaded from your folders)."""
+        self.templates = list(templates)
+        cur = self.kind.currentText()
+        self.kind.blockSignals(True)
+        self.kind.clear(); self.kind.addItems([NONE, WALL] + self.templates)
+        self.kind.setCurrentText(cur if cur in [NONE, WALL] + self.templates else NONE)
+        self.kind.blockSignals(False)
+
     def __init__(self, templates, parent=None):
         super().__init__(parent)
         self.templates = list(templates)

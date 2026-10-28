@@ -300,6 +300,25 @@ Supply ripple much slower than the ions' transit (mains ripple against a millise
 |---|
 | ![Sensitivity](docs/screenshots/sweeps_sensitivity.png) |
 
+### Your own models (kept in your own folder)
+
+Models you don't want in this repository (a customer's device, a design under NDA) live in a folder of your own and load into the app. Use **Models > Load models folder…**, or the button on Home. The app remembers the folder and loads it at every start.
+
+Every file in that folder, or in a folder one level down, whose name ends in `_plugin.py` is imported. Its models then show on Home under **Your models**, in File > Add model, in the Instrument tab, in setup files and in the Sweeps tab, and they chain with the built-in stages like any other model. A plugin file lists its models:
+
+```python
+from ionsim.gui.common import SimTab
+
+class MyTab(SimTab):          # settings on the left, Run, plots on the right
+    ...
+
+MODELS = {"My device": (MyTab, "One line about it for the Home page.")}
+```
+
+The plugin's own folder is on the import path, so it can import the helper modules next to it. It needs no path settings, because the app already has ION-SIM loaded. `examples/plugins/flight_time_plugin.py` is a complete small example to copy.
+
+A plugin that fails to load is reported, and never stops the app. A setup that uses a model whose folder isn't loaded opens without that model, with a note saying which folder to load. **Models > Don't load my folders at start** clears the list.
+
 ### Ion heating
 
 The Ion funnel, Device builder and TWAVE tabs have an **Ion heating** box (on by default). For every ion it reports the effective temperature (how hot the gas collisions are), the internal temperature (which lags by the set number of collisions), the mean centre-of-mass collision energy, collisions per ion and, with an activation energy, the fraction left intact. The **Heating** plot shows the mean and hottest-ion temperatures along the ion axis, where ions fragment, and per-ion peaks.
@@ -636,6 +655,7 @@ ION-SIM/
 │   ├── scope.py            # Rigol oscilloscope capture over LAN (SCPI socket) or USB (VISA)
 │   ├── circuit.py          # electrodes as a load: capacitance matrix, SPICE subcircuit, loaded drive with ngspice
 │   ├── sweep.py            # sweeps and tolerance studies: spreads, sampling, sensitivity
+│   ├── plugins.py          # models loaded from your own folders (*_plugin.py files)
 │   ├── heating.py          # effective / internal ion temperature, fragmentation estimate
 │   ├── tof.py              # OA-TOF: pusher pulse, reflectron, exact gap-by-gap flight, resolution
 │   ├── stages.py           # stages: one model's exit ions (or the inlet's gas) start the next model
@@ -650,7 +670,8 @@ ION-SIM/
 │                           #   traj3d.py (3D ion paths with the electrodes), flow_movie.py (moving inlet
 │                           #   picture), speeds.py (gas and ion speeds along the instrument)
 ├── examples/               # one demo per device; geometry/ has example STEP, DXF and .ionsim setups,
-│                           #   drivers/ has example .iondrv drivers, spice/ a pusher pulser netlist and its
+│                           #   drivers/ has example .iondrv drivers, plugins/ an example model loaded from a folder,
+│                           #   spice/ a pusher pulser netlist and its
 │                           #   result, scope/ a Rigol CSV capture
 ├── tests/smoke_test.py     # quick end-to-end check of imports, solves and the app window
 │                           #   (fake_rigol.py: a pretend Rigol scope on a local socket for the capture check)
