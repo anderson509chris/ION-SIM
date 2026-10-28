@@ -89,6 +89,8 @@ class Device:
     board_thickness: float = 0.0    # boards: substrate behind the pads (0 = none)
     board_eps: float = 4.4          # boards: substrate relative permittivity (FR4)
     drivers: dict = field(default_factory=dict)   # name -> Driver, for electrodes wired to drivers
+    load: list = field(default_factory=list)      # [(net, [electrode names], Trace)]: what the circuit load adds
+                                                  # to each net's drive (circuit.loaded_drive), on top of its own
 
     # ---------- geometry helpers ----------
     def names(self):
@@ -292,7 +294,8 @@ class Device:
                 "board_thickness": self.board_thickness, "board_eps": self.board_eps,
                 "electrodes": {e.name: e.settings() for e in self.electrodes},
                 "drivers": [d.to_dict() for n, d in self.drivers.items()
-                            if any(e.drive.startswith(n + " / ") for e in self.electrodes)]}
+                            if any(e.drive.startswith(n + " / ") for e in self.electrodes)],
+                "load": [{"net": n, "members": m, "trace": tr.to_dict()} for n, m, tr in self.load]}
 
     def apply_dict(self, d):
         for k in ("rf_freq", "board_gap", "both_boards", "length", "open_entrance", "board_thickness", "board_eps"):
@@ -303,6 +306,9 @@ class Device:
         for dd in d.get("drivers", []):
             drv = Driver.from_dict(dd)
             self.drivers[drv.name] = drv
+        if "load" in d:
+            from .waveforms import Trace
+            self.load = [(x["net"], list(x["members"]), Trace.from_dict(x["trace"])) for x in d["load"]]
         missing = []
         for name, s in d.get("electrodes", {}).items():
             try:
@@ -514,7 +520,7 @@ class _Mirror:
 
 
 # ---------------------------------------------------------------------------------
-def part_values(dev):
+def part_values(dev, with_load=True):
     """Boundary value per electrode id for every part, and what each part is.
     Parts: "dc"; "cos"/"sin" at the device RF frequency and "cos@f"/"sin@f" at any other
     frequency (driver RF, excitation tones); "tw{p}" for the device's TWAVE phases and
@@ -546,12 +552,44 @@ def part_values(dev):
         if wv:
             drv = dev.driver_of(e)[0]
             part(f"wave@{drv.name}#{wv[0].name}", ("wave", wv[0]))[k] = wv[1]
+    if with_load:
+        idx = {e.name: k for k, e in enumerate(dev.electrodes, start=1)}
+        for net, members, tr in dev.load:
+            for nm in members:
+                if nm in idx:
+                    part(f"load#{net}", ("load", tr))[idx[nm]] = 1.0
     out_v, out_m = {}, {}
     for name, v in vals.items():
         v[np.abs(v) < 1e-12] = 0.0
         if name == "dc" or v.any():
             out_v[name], out_m[name] = v, meta[name]
     return out_v, out_m
+
+
+def part_coefficient(m, t):
+    """Weight of a part (its meta, from part_values) at time(s) t."""
+    if m[0] == "dc":
+        return np.ones(np.shape(t))
+    if m[0] == "cos":
+        return np.cos(2 * np.pi * m[1] * np.asarray(t, float))
+    if m[0] == "sin":
+        return -np.sin(2 * np.pi * m[1] * np.asarray(t, float))
+    if m[0] in ("pulse", "wave", "load"):
+        return m[1].level(t)
+    spec, k = m[1], m[2]
+    return spec.amp * spec.level(k, t)
+
+
+def electrode_waveforms(dev, t, with_load=False):
+    """Voltage of every electrode at times t: (n_electrodes, len(t)), in electrode order, as the
+    drive sets it (with_load: plus what the circuit load adds, dev.load)."""
+    t = np.atleast_1d(np.asarray(t, float))
+    vals, meta = part_values(dev, with_load)
+    out = np.zeros((len(dev.electrodes), len(t)))
+    for p, v in vals.items():
+        if np.any(v[1:]):
+            out += np.outer(v[1:], part_coefficient(meta[p], t))
+    return out
 
 
 class DeviceField:
@@ -583,21 +621,7 @@ class DeviceField:
 
     # ---- time dependence ----
     def coefficients(self, t):
-        out = []
-        for p in self.parts:
-            m = self.meta[p]
-            if m[0] == "dc":
-                out.append(1.0)
-            elif m[0] == "cos":
-                out.append(np.cos(2 * np.pi * m[1] * t))
-            elif m[0] == "sin":
-                out.append(-np.sin(2 * np.pi * m[1] * t))
-            elif m[0] in ("pulse", "wave"):
-                out.append(float(m[1].level(t)))
-            else:
-                spec, k = m[1], m[2]
-                out.append(spec.amp * float(spec.level(k, t)))
-        return np.array(out)
+        return np.array([float(part_coefficient(self.meta[p], t)) for p in self.parts])
 
     # ---- timing, for picking time steps ----
     def frequencies(self):

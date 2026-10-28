@@ -17,7 +17,7 @@ from .electrode_view import ElectrodeView, INSULATOR
 from .funnel_tab import FLOWS
 from .driver_store import get_store
 from .heating_view import HeatingBox, draw_heating
-from .ion_table import IonTable, species_color, path_style, fate_caption, species_legend, species_stats
+from .ion_table import IonTable, species_color, path_style, fate_caption, species_legend, species_stats, flight_metrics
 from .traj3d import draw_traj3d
 from .speeds import ion_speeds, gas_line
 from ..ions import IonSpecies
@@ -33,6 +33,7 @@ RF_ALT = {"RF+ / RF- alternate across the path": "across", "RF+ / RF- alternate 
           "RF+ outputs only": "none"}
 FILE_FILTER = "Geometry (*.dxf *.step *.stp *.iges *.igs *.brep *.stl *.obj *.ply *.off *.glb *.gltf)"
 MAX_NODES = 40_000_000
+NETS = ["One per driver output (electrodes wired together)", "One per electrode"]
 
 
 def examples_dir():
@@ -44,9 +45,14 @@ def examples_dir():
 
 class DeviceTab(SimTab):
     def __init__(self, parent=None, store=None):
-        super().__init__(["Geometry", "Potential", "Trajectories", "3D", "Results", "Gas flow", "Heating"], parent)
+        super().__init__(["Geometry", "Potential", "Trajectories", "3D", "Results", "Gas flow", "Heating",
+                          "Capacitance", "Loaded drive"], parent)
         self.plots.hint("Gas flow", "Set Gas flow (section 7) to “Flow field from gas throughput” and press Solve and fly.")
         self.plots.hint("Heating", "Tick Ion heating (section 8) and press Solve and fly.")
+        self.plots.hint("Capacitance", "Press “Capacitance and crosstalk” in section 9.")
+        self.plots.hint("Loaded drive", "Press “Check the drive with the load” in section 9 (needs ngspice).")
+        self.cap = None             # circuit.Capacitance of the last load solve
+        self.loaded = None          # circuit.LoadedDrive of the last check
         self.dev = None
         self.grid = None            # (key, DeviceGrid)
         self.field = None           # last DeviceField (warm start)
@@ -216,6 +222,36 @@ class DeviceTab(SimTab):
         self.form_layout.addWidget(self.extra)
         self.heat = HeatingBox("8. Ion heating")
         self.form_layout.addWidget(self.heat)
+
+        # ---- 9. electrode load ----
+        self.load = ParamForm("9. Electrode load and drive (SPICE)", [
+            ("r", "Driver source resistance", 50.0, 0.001, 1e9, 3, 10, "Ω"),
+            ("rdc", "Source resistance of nets held at DC", 1000.0, 0.001, 1e12, 3, 100, "Ω"),
+            ("l", "Wiring inductance per net", 0.0, 0.0, 1e6, 2, 10, "nH"),
+            ("per", "Drive periods to settle", 2, 2, 50, 0, 1, ""),
+        ])
+        self.nets = QtWidgets.QComboBox(); self.nets.addItems(NETS)
+        self.nets.setToolTip("Electrodes on one driver output share a wire, so they are one net; or treat every electrode "
+                             "as its own net (one field solve each)")
+        self.load.layout().insertRow(0, "Nets", self.nets)
+        lb = QtWidgets.QGridLayout()
+        for k, (label, fn, tip) in enumerate((
+                ("Capacitance and crosstalk", self.solve_load, "One field solve per net: total, to-ground and mutual "
+                                                               "capacitance, and how much of one net's swing reaches another"),
+                ("Export SPICE load…", self.export_load, "The electrodes as a SPICE subcircuit (.lib) to connect to your "
+                                                         "own driver model"),
+                ("Check the drive with the load", self.check_drive, "Run ngspice: every net driven by its waveform through "
+                                                                    "the source resistance into the electrode load"),
+                ("Fly with the load", self.use_loaded, "Add what the load does to each net (electrode minus source "
+                                                       "voltage) to the drive, so Solve and fly uses the voltages the "
+                                                       "electrodes really get"),
+                ("Take the load off", self.clear_load, "Fly with the drive as set again"))):
+            b = QtWidgets.QPushButton(label); b.setToolTip(tip); b.clicked.connect(fn)
+            lb.addWidget(b, k // 2, k % 2)
+        self.load.layout().addRow(lb)
+        self.load_label = QtWidgets.QLabel(""); self.load_label.setWordWrap(True)
+        self.load.layout().addRow(self.load_label)
+        self.form_layout.addWidget(self.load)
         self.form_layout.addStretch(1)
 
         self.scroll.setMinimumWidth(470)
@@ -662,7 +698,8 @@ class DeviceTab(SimTab):
             self._error("No geometry", "Open a DXF or 3D file first (examples are in examples/geometry).")
             return
         self._sync_drivers()
-        if not any(any(self._eff(e)[:3]) or self._eff(e)[3] >= 0 for e in self.dev.electrodes):
+        if not any(any(self._eff(e)[:3]) or self._eff(e)[3] >= 0 or self.dev.wave_of(e) or self.dev.pulse_of(e)
+                   for e in self.dev.electrodes):
             self._error("No voltages", "Every electrode is at 0 V. Select electrodes and apply a pattern first.")
             return
         self._drive_to_device()
@@ -755,6 +792,7 @@ class DeviceTab(SimTab):
         self.last_table = (["species", "mz", "z", "status(1=out,2=lost,0=flying)", "x_mm", "y_mm", "z_mm", "t_ms"],
                            [[species[k].name, species[k].mz, species[k].z, int(s), *(p / MM), t * 1e3]
                             for k, s, p, t in zip(res.species, st, res.final_pos, res.t_end)])
+        self.metrics = flight_metrics(res, species, L)
         io = out["io"]
         z0, z1 = info["z_start"], info["z_end"]
         self.speeds = {"span": (z0, z1), "gas": gas_line(out["gas_u"], (io["x0"] * MM, io["y0"] * MM), z0, z1),
@@ -1046,6 +1084,179 @@ class DeviceTab(SimTab):
             self.store.touch()
 
     # ================= helpers =================
+    # ================= electrode load =================
+    def _load_grid(self):
+        """The device's grid for a load solve (the last one if the geometry is unchanged)."""
+        self._sync_drivers(); self._drive_to_device()
+        key = self._grid_key()
+        return self.grid[1] if self.grid and self.grid[0] == key else None, key
+
+    def solve_load(self):
+        if self.dev is None:
+            self._error("No geometry", "Open a DXF or 3D file first.")
+            return
+        dg, key = self._load_grid()
+        h, dev = self.h.value() * MM, self.dev
+        by = "output" if self.nets.currentIndex() == 0 else "electrode"
+        from ..circuit import device_capacitance, nets
+
+        def job(progress):
+            g = dg or dev.build(h)
+            t0 = time.time()
+            cap = device_capacitance(g, by, progress=lambda f: progress(0.05 + 0.95 * f))
+            return dict(grid=g, key=key, cap=cap, t=time.time() - t0)
+
+        self.log(f"Capacitance: {len(nets(dev, by))} nets, one field solve each…")
+        self.start(job, self._show_load, "Solving the capacitance of each net…")
+
+    def _show_load(self, out):
+        self.grid = (out["key"], out["grid"])
+        cap = self.cap = out["cap"]
+        self.loaded = None
+        self.log(f"Capacitance of {cap.n} nets in {out['t']:.1f} s" + (f" ({cap.note})" if cap.note else "")
+                 + (f"; matrix symmetric to {cap.asym:.1%}" if cap.n > 1 else ""))
+        for row in cap.table()[1:][:40]:
+            self.log("  " + row.replace(", ", " | "))
+        worst = cap.worst_pairs(5)
+        if worst:
+            self.log("  Strongest coupling (share of a swing on the second net that reaches the first if it floats): "
+                     + "; ".join(f"{a} ← {b} {c:.1%} ({m * 1e12:.3g} pF)" for a, b, c, m in worst))
+        self.load_label.setText(f"{cap.n} nets, {cap.total().sum() * 1e12:.4g} pF in all. Export it, or check the drive.")
+        self.last_table = (["net", "electrodes", "total_F", "to_ground_F"] + [f"C_{n}_F" for n in cap.names],
+                           [[n, " ".join(m), cap.C[i, i], cap.to_ground()[i], *cap.C[i]] for i, (n, m) in
+                            enumerate(zip(cap.names, cap.members))])
+        self._draw_cap()
+
+    def _draw_cap(self):
+        from ..circuit import short_names
+        cap = self.cap
+        fig = self.plots.fig("Capacitance")
+        a1, a2 = fig.subplots(1, 2, gridspec_kw=dict(width_ratios=[1.2, 1]))
+        y = np.arange(cap.n)
+        a1.barh(y, cap.to_ground() * 1e12, label="to ground")
+        a1.barh(y, (cap.total() - cap.to_ground()) * 1e12, left=cap.to_ground() * 1e12, label="to other nets")
+        a1.set_yticks(y, [f"{k + 1}  {n if len(n) < 26 else n[:24] + '…'}" for k, n in enumerate(short_names(cap.names))],
+                      fontsize=7 if cap.n < 20 else 5)
+        a1.invert_yaxis(); a1.set_xlabel("pF"); a1.legend(fontsize=7)
+        a1.set_title("Capacitance of each net", fontsize=9)
+        K = cap.coupling() * 100
+        im = a2.imshow(K, cmap="magma_r", vmin=0, vmax=max(K.max(), 1e-3))
+        a2.set_title("Crosstalk: % of net j's swing on net i if i floats", fontsize=9)
+        a2.set_xlabel("net j"); a2.set_ylabel("net i")
+        if cap.n <= 16:
+            a2.set_xticks(y, [str(k + 1) for k in y], fontsize=7); a2.set_yticks(y, [str(k + 1) for k in y], fontsize=7)
+        fig.colorbar(im, ax=a2, shrink=0.8, label="%")
+        self.plots.draw("Capacitance")
+
+    def export_load(self):
+        if self.cap is None:
+            self._error("Electrode load", "Press “Capacitance and crosstalk” first.")
+            return
+        from ..circuit import spice_subckt, drive_netlist
+        name = os.path.splitext(os.path.basename(self.dev.source or "device"))[0]
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export SPICE load", f"{name}_load.lib",
+                                                        "SPICE library (*.lib *.sub *.inc);;Netlist with the drive (*.cir)")
+        if not path:
+            return
+        if path.lower().endswith(".cir"):
+            v = self.load.values()
+            text = drive_netlist(self.dev, self.cap, v["r"], v["l"] * 1e-9, periods=int(v["per"]), title=name,
+                                 r_dc=v["rdc"])[0]
+        else:
+            text = spice_subckt(self.cap, title=name)
+        with open(path, "w") as f:
+            f.write(text)
+        self.log(f"Wrote {path}: " + ("the load with every net driven by its waveform" if path.lower().endswith(".cir")
+                                     else "subcircuit IONSIM_LOAD, one pin per net; .include it and connect your driver"))
+
+    def check_drive(self):
+        if self.cap is None:
+            self._error("Electrode load", "Press “Capacitance and crosstalk” first.")
+            return
+        self._sync_drivers(); self._drive_to_device()
+        from ..circuit import loaded_drive
+        from ..waveforms import find_simulator
+        if not find_simulator("ngspice")[1]:
+            self._error("ngspice", "ngspice was not found. Install it (ngspice.sourceforge.io), or use Export SPICE load "
+                                   "and run the .cir netlist in LTspice, then import the electrode voltages on the Drivers tab.")
+            return
+        v, dev, cap = self.load.values(), self.dev, self.cap
+
+        def job(progress):
+            progress(0.1)
+            return loaded_drive(dev, cap, v["r"], v["l"] * 1e-9, periods=int(v["per"]), r_dc=v["rdc"])
+        self.start(job, self._show_loaded, "Running ngspice with the electrode load…")
+
+    def _show_loaded(self, ld):
+        self.loaded = ld
+        rep = ld.report()
+        self.log(f"Drive with the load ({ld.window * 1e6:.4g} µs window, steady state):")
+        for r in rep:
+            if r["driven"]:
+                self.log(f"  {r['name']}: swing {r['swing_src']:.4g} V at the source → {r['swing_el']:.4g} V on the "
+                         f"electrodes ({r['swing_el'] / r['swing_src'] - 1:+.2%}), largest difference {r['max_err']:.3g} V, "
+                         f"current {r['i_rms'] * 1e3:.3g} mA rms ({r['i_peak'] * 1e3:.3g} mA peak), {r['var']:.3g} VA reactive")
+            else:
+                self.log(f"  {r['name']} (held at {ld.v_src[rep.index(r)][0]:.4g} V): crosstalk {r['swing_el']:.3g} V pk-pk, "
+                         f"{r['max_err']:.3g} V at worst")
+        self.last_table = (["t_s"] + [f"src {n}" for n in ld.cap.names] + [f"el {n}" for n in ld.cap.names]
+                           + [f"I {n}" for n in ld.cap.names],
+                           [[t, *ld.v_src[:, k], *ld.v_el[:, k], *ld.i_src[:, k]] for k, t in enumerate(ld.t)])
+        self.load_label.setText("Checked. “Use the loaded drive” flies ions with these electrode voltages.")
+        self._draw_loaded()
+
+    def _draw_loaded(self):
+        from ..circuit import short_names
+        ld = self.loaded
+        names = short_names(ld.cap.names)
+        fig = self.plots.fig("Loaded drive")
+        a1, a2 = fig.subplots(2, 1, sharex=True)
+        rep = ld.report()
+        driven = [k for k, r in enumerate(rep) if r["driven"]]
+        quiet = [k for k, r in enumerate(rep) if not r["driven"]]
+        span = ld.t * 1e6
+        for c, k in enumerate(driven[:6]):
+            col = f"C{c}"
+            a1.plot(span, ld.v_src[k], color=col, lw=0.8, ls="--")
+            a1.plot(span, ld.v_el[k], color=col, lw=1.0, label=names[k])
+        a1.set_ylabel("V"); a1.set_title("Driven nets: source (dashed) and electrodes (solid)", fontsize=9)
+        if driven:
+            a1.legend(fontsize=6, loc="upper right")
+        if quiet:
+            for c, k in enumerate(sorted(quiet, key=lambda k: -rep[k]["max_err"])[:6]):
+                a2.plot(span, ld.v_el[k] - ld.v_src[k], lw=0.9, label=names[k])
+            a2.set_title("Crosstalk onto nets held at DC (electrode minus supply)", fontsize=9)
+            a2.legend(fontsize=6, loc="upper right")
+        else:
+            for c, k in enumerate(driven[:6]):
+                a2.plot(span, ld.v_el[k] - ld.v_src[k], lw=0.9, label=names[k])
+            a2.set_title("Electrode minus source", fontsize=9)
+        a2.set_xlabel("time (µs)"); a2.set_ylabel("V")
+        self.plots.draw("Loaded drive")
+
+    def use_loaded(self):
+        if self.loaded is None:
+            self._error("Electrode load", "Press “Check the drive with the load” first.")
+            return
+        from ..circuit import apply_load
+        on = apply_load(self.dev, self.loaded)
+        if not on:
+            self.load_label.setText("The load moves no net by more than 0.1 % of the drive: nothing to add.")
+            self.log("The load changes every net by under 0.1 % of the drive, so the flight would not change; nothing added.")
+            return
+        worst = max((float(np.max(np.abs(tr.v))) for _, _, tr in on), default=0.0)
+        self.load_label.setText(f"Flying with the load on {len(on)} nets (up to {worst:.3g} V off the set drive). "
+                                "Solve and fly to see the effect.")
+        self.log(f"The load is on: {len(on)} nets get their electrode-minus-source voltage added (largest {worst:.3g} V). "
+                 "It is saved with the setup; “Take the load off” removes it.")
+
+    def clear_load(self):
+        if self.dev is not None and self.dev.load:
+            from ..circuit import clear_load
+            clear_load(self.dev)
+            self.load_label.setText("The load is off: the electrodes carry the drive as set.")
+            self.log("The load is off.")
+
     def _error(self, title, text):
         self.log(f"{title}: {text}")
         if QtWidgets.QApplication.platformName() != "offscreen":

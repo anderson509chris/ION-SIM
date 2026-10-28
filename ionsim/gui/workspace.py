@@ -27,6 +27,7 @@ from .device_tab import DeviceTab
 from .tof_tab import TofTab
 from .drivers_tab import DriversTab
 from .instrument_tab import InstrumentTab
+from .sweep_tab import SweepTab
 
 APP_NAME = "Ion Sim"
 SETUP_FILTER = "Ion Sim setup (*.ionsetup)"
@@ -105,7 +106,9 @@ class Workspace(QtWidgets.QMainWindow):
         self.instrument = InstrumentTab(TEMPLATES)
         self.instrument.make_models.connect(self.make_stages)
         self.drivers = DriversTab()
-        for w, name in ((self.home, "Home"), (self.instrument, "Instrument"), (self.drivers, "Drivers")):
+        self.sweeps = SweepTab(self)
+        for w, name in ((self.home, "Home"), (self.instrument, "Instrument"), (self.drivers, "Drivers"),
+                        (self.sweeps, "Sweeps")):
             self.tabs.addTab(w, name)
             i = self.tabs.indexOf(w)
             bar.setTabButton(i, QtWidgets.QTabBar.RightSide, None)
@@ -114,6 +117,8 @@ class Workspace(QtWidgets.QMainWindow):
                                 "Load a CAD model of the whole instrument and say which model each part is")
         self.tabs.setTabToolTip(self.tabs.indexOf(self.drivers),
                                 "The electronics: RF, TWAVE, excitation tones and pulses, wired to electrodes in the models")
+        self.tabs.setTabToolTip(self.tabs.indexOf(self.sweeps),
+                                "Vary voltages and settings anywhere in a chain of models: sweeps and tolerance studies")
         self.setCentralWidget(self.tabs)
         self._menus()
         self.statusBar().showMessage("Pick a device to set up, or a tab to carry on")
@@ -249,7 +254,7 @@ class Workspace(QtWidgets.QMainWindow):
                 row["cad"] = _rel(m.ctl.cad_path, base_dir)
             rows.append(row)
         return {"ionsim_setup": 1, "models": rows, "drivers": self.drivers.store.lib.to_list(),
-                "instrument": self.instrument.state(base_dir)}
+                "instrument": self.instrument.state(base_dir), "sweeps": self.sweeps.state()}
 
     def apply_setup(self, d, base_dir="", quiet=False):
         """Replace the open models with the ones in a setup_state."""
@@ -283,6 +288,10 @@ class Workspace(QtWidgets.QMainWindow):
                 self.link(m, r.get("ions_from"))
         if d.get("instrument") and not self.instrument.set_state(d["instrument"], base_dir):
             notes.append("the instrument CAD file was not found")
+        if d.get("sweeps"):
+            gone = self.sweeps.set_state(_renamed(d["sweeps"], rename))
+            if gone:
+                notes.append("sweep settings no longer available: " + ", ".join(gone))
         self._save_models()
         if notes and not quiet and QtWidgets.QApplication.platformName() != "offscreen":
             box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Information, APP_NAME,
@@ -409,10 +418,12 @@ class Workspace(QtWidgets.QMainWindow):
             self.link(m, keep)
         for m in self.models:
             self._label(m)
+        self.sweeps.models_changed(renamed)
         self._save_models()
 
     def _stage_changed(self, m):
         self._label(m)
+        self.sweeps.models_changed()
         self._save_models()
 
     def _label(self, m):
@@ -568,20 +579,25 @@ class Workspace(QtWidgets.QMainWindow):
 
     # ---------- actions ----------
     def run_current(self):
+        if self.tabs.currentWidget() is self.sweeps:
+            self.sweeps.run_btn.click()
+            return
         m = self._current_model()
         if m is not None:
             m.ctl.run_btn.click()
 
     def stop_current(self):
         self._chain = self._chain_now = None
+        self.sweeps.stop()
         m = self._current_model()
         if m is not None:
             m.ctl.stop()
 
     def save_plot(self):
         m = self._current_model()
-        fig = m.plots.current_figure() if m else (self.drivers.plots.current_figure()
-                                                  if self.tabs.currentWidget() is self.drivers else None)
+        cur = self.tabs.currentWidget()
+        fig = m.plots.current_figure() if m else (cur.plots.current_figure()
+                                                  if cur in (self.drivers, self.sweeps) else None)
         if fig is None:
             return
         path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save plot", "plot.png", "PNG (*.png);;PDF (*.pdf);;SVG (*.svg)")
@@ -592,12 +608,13 @@ class Workspace(QtWidgets.QMainWindow):
     def export_csv(self):
         import csv
         m = self._current_model()
-        if m is None or not m.ctl.last_table:
+        ctl = self.sweeps if self.tabs.currentWidget() is self.sweeps else (m.ctl if m else None)
+        if ctl is None or not ctl.last_table:
             QtWidgets.QMessageBox.information(self, APP_NAME, "Run a model first.")
             return
         path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export results", "results.csv", "CSV (*.csv)")
         if path:
-            header, rows = m.ctl.last_table
+            header, rows = ctl.last_table
             with open(path, "w", newline="") as f:
                 w = csv.writer(f); w.writerow(header); w.writerows(rows)
             self.statusBar().showMessage(f"Saved {path}", 5000)
@@ -619,6 +636,7 @@ class Workspace(QtWidgets.QMainWindow):
             "<p>The window with one fixed tab per device is under View &gt; Classic tabs window.</p>")
 
     def closeEvent(self, e):
+        self.sweeps.abort()                     # its settings back to nominal before they are kept
         self._save_models()
         if self.persist:
             try:

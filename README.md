@@ -18,6 +18,7 @@ Ion Sim solves electrode fields on a grid, flies thousands of ions through them,
 * **OA-TOF:** an orthogonal-acceleration time-of-flight analyser: the beam in the pusher, the pusher and puller pulse (with real rise times), acceleration, drift, a single- or two-stage reflectron (or linear) and the detector. Arrival times, mass spectra, resolution, what limits the peak width, where ions land on the detector, duty cycle, scans of any setting and an automatic reflectron tune.
 * **Device builder:** load a **DXF** drawing or a **STEP / STL / OBJ** model, click each electrode to see and set its DC, RF and TWAVE phase (colored by voltage), apply a DC gradient or an 8-phase TWAVE pattern across many pads at once, then solve and fly ions. Works for flat boards (TWAVE), ring stacks drawn as a profile, rod sets, and full 3D parts.
 * **Drivers:** build your electronics once (a TWAVE/RF combiner with 16 outputs, a quad RF supply with 8 excitation tones, a TOF pusher and puller, an RF pair, DC channels) and wire their outputs to electrodes in the Quadrupole, OA-TOF and Device builder tabs. Each output can carry DC, RF, a TWAVE phase with real edge rise times, any number of excitation tones, a pulse, and an **imported waveform: the output of a SPICE model (ngspice or LTspice) or a trace captured from a Rigol oscilloscope**, so electrodes see what the real circuit puts out, ringing and droop included.
+* **Signal integrity and whole-system sweeps:** the field solve gives every electrode's **capacitance and crosstalk**; export them as a **SPICE load**, check the drive through the driver's source resistance and wiring with ngspice, and fly the ions in the voltages the electrodes really get. The **Sweeps** tab varies any voltage or setting anywhere in a chain of models (inlet → funnel → quadrupole → OA-TOF) and shows what comes out of the end: **sweeps**, and **tolerance studies** with supply errors, ripple and timing jitter, the spread of the results and which setting matters most.
 * **Ion heating:** every gas-phase flight (funnel, Device builder, TWAVE) tracks each ion's effective and internal temperature, the collision energy, where along the device ions get hottest, and optionally how many survive intact (fragmentation / unfolding estimate).
 
 ---
@@ -264,6 +265,41 @@ Because fields add linearly, a waveform costs one more field part per output tha
 |---|
 | ![Scope capture](docs/screenshots/scope_capture_dialog.png) |
 
+#### Electrode load and signal integrity
+
+Section **9. Electrode load and drive (SPICE)** of the Device builder treats the electrodes as the circuit load they are.
+
+* **Capacitance and crosstalk** solves the device once per net and takes the charge on every electrode from the field (insulators count with their permittivity). Nets are the electrodes on one driver output (they share a wire), or every electrode on its own. The **Capacitance** plot shows each net's capacitance to ground and to the other nets, and the crosstalk matrix: the fraction of a step on one net that appears on another net left floating. The log lists the worst pairs.
+* **Export SPICE load…** writes the load as a subcircuit (`.subckt IONSIM_LOAD`, one pin per net, capacitors to ground and between nets) to put after your own driver model, or a whole netlist with every net driven by its ION-SIM waveform.
+* **Check the drive with the load** runs that netlist with ngspice: each net driven through the **source resistance** (and a separate one for nets held at DC) and the **wiring inductance**, for a few periods to settle. The **Loaded drive** plot shows source against electrode on every driven net, and the crosstalk that lands on the DC nets; the log gives the swing lost, the worst error and the drive current per net.
+* **Fly with the load** puts the difference (electrode minus source) back on the device as one more field part per net, so the next **Solve and fly** uses the voltages the electrodes really get. **Take the load off** removes it.
+
+On the example TWAVE board wired to the combiner (`twave_board_combiner.ionsim`, 21 nets) the capacitances take about 30 s. Through 50 Ω the driven pads stay within 0.01 to 0.03 V of the drive, but the guard strips, held at 25 V through 1 kΩ, pick up about ±1 V of the neighbouring RF (each couples about 40 % of an RF strip's swing when floating). 93 % of the ions still get through with the load on.
+
+| Capacitance and crosstalk of the combiner-wired TWAVE board | The drive through 50 Ω, checked with ngspice |
+|---|---|
+| ![Electrode capacitance](docs/screenshots/device_capacitance.png) | ![Loaded drive](docs/screenshots/device_loaded_drive.png) |
+
+### Sweeps and tolerances
+
+The **Sweeps** tab (after Drivers) runs whole chains of models with settings changed.
+
+1. **Chain to run:** pick the last model; it runs with every model it takes its ions from.
+2. **Settings to vary:** **Add…** lists every number in the chain's models (grey ones are not used in a model's present mode) and the drivers' values: DC, RF and pulse height on each output, RF frequency, TWAVE amplitude, speed and edge time, pulse timing, tone amplitude and frequency. Each row has a sweep range (**From**, **To**) and a tolerance (**±** in % or in the setting's units, and a **Spread**: Gaussian with ± as 3σ, uniform, or ripple, ± sin of a random phase).
+3. **Study:** **Sweep** runs each setting over its range in turn, the others at nominal. **Tolerances** sets every setting at random within its ± at once, for the number of trials (Monte Carlo, with a seed so a study can be repeated). With **Same random ions in every run** (on by default) every run starts from the same random numbers, so two runs differ only by their settings and a sweep comes out smooth instead of carrying each run's sampling noise.
+
+Each run starts at the first model whose settings changed (a driver change runs the whole chain), and keeps the headline results of every model: transmission and transit time, resolution and flight time, arrival time and resolving power, CV peak, gas flow and energy at the skimmer. **Result vs setting** plots any of them against each setting; **Spread** is its histogram over the trials with the 5 to 95 % band; **Sensitivity** ranks the settings by how much they move it (the slope at nominal times each setting's ±, or each setting's share of the spread from a straight-line fit over the trials). The log has every result's nominal, mean and σ, and File > Export CSV writes every run. Settings go back to nominal at the end, and the nominal is run again so each model's own tab shows it. The study is saved in setup files.
+
+Supply ripple much slower than the ions' transit (mains ripple against a millisecond funnel) is a **Ripple** spread on the DC: each run sees it frozen at a random point of its cycle. Timing jitter is a Gaussian spread on a pulse delay. With Same random ions off, each run flies its own random ions and part of any spread is sampling noise; more ions per run lowers it.
+
+| Sweep: OA-TOF resolution (fed by a quadrupole) against the reflectron and the pusher | Tolerances: spread of the resolution over 40 trials |
+|---|---|
+| ![Sweep](docs/screenshots/sweeps_sweep.png) | ![Tolerances](docs/screenshots/sweeps_tolerance.png) |
+
+| Which setting matters most |
+|---|
+| ![Sensitivity](docs/screenshots/sweeps_sensitivity.png) |
+
 ### Ion heating
 
 The Ion funnel, Device builder and TWAVE tabs have an **Ion heating** box (on by default). For every ion it reports the effective temperature (how hot the gas collisions are), the internal temperature (which lags by the set number of collisions), the mean centre-of-mass collision energy, collisions per ion and, with an activation energy, the fraction left intact. The **Heating** plot shows the mean and hottest-ion temperatures along the ion axis, where ions fragment, and per-ion peaks.
@@ -413,6 +449,8 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 
 * **Waveform:** each output is V(t) = DC + RF cos(2πf t + φ) + (Tones ×) Σ A_k cos(2πf_k t + φ_k) + A_TW · gate_p(t) + A_pulse · pulse(t). Phase p's gate is high while ((p − step) mod N) < n_on, the step advances every pitch / speed, and each edge ramps linearly over the rise time.
 * **Imported waveforms (`ionsim/waveforms.py`, `ionsim/scope.py`):** a waveform is a sampled record v(t), linearly interpolated and repeated with its period. It adds Waveform × v(t) to its output and one field part per output that carries it, whose weight at time t is v(t). SPICE raw files are read directly (header, then float64 rows for ngspice, float64 time and float32 values for LTspice, absolute value of LTspice's negative compressed times, stepped runs split where time restarts). Rigol captures use `:WAV:PRE?` and `:WAV:DATA?`: volts = (code − y-origin − y-reference) · y-increment, t = (i − x-reference) · x-increment + x-origin.
+* **Electrode load (`ionsim/circuit.py`):** the Maxwell capacitance matrix comes from the field solve. With net j at 1 V and the rest at 0 V, the charge on net i is ε0 Σ w (φ_electrode − φ_neighbour) over the grid links that leave its electrodes (w the link weight, scaled by the local permittivity and by 2πh·r, h or the 2D length to physical units). C_ii is net i's total capacitance, −C_ij the mutual capacitance, the row sum the capacitance to ground, and C_ij / C_ii the floating crosstalk. The drive check is a transient ngspice run: PWL sources with each net's waveform, R and L in series, the capacitance network, `method=gear`, a window of whole periods of every frequency in use, and the last window after settling. The electrode-minus-source difference goes back to the device as a repeating waveform part per net.
+* **Sweeps (`ionsim/sweep.py`, `gui/sweep_tab.py`):** the tab sets each model's inputs and the drivers in the library (in memory; the library on disk is not touched), runs the models in order with their own Run, and reads each model's headline results. Sensitivity in a sweep is the local slope at nominal (from the points around it) times the setting's ±; in a tolerance study it is a least-squares fit of the result on all settings at once, each coefficient times that setting's spread over the trials, with R² for how much of the spread a straight line explains.
 * **Field parts:** a device is solved once per distinct component: DC, cos and sin of each frequency in use, and each TWAVE phase of each driver. Outputs that share a component share its solve, so 16 outputs or several tones stay cheap. Electrodes not wired to a driver use the device's own RF and TWAVE settings as before.
 * **Quadrupole:** the rods are four separate electrodes, each driven by its output's waveform. For a/q the tab uses U = (DC_x − DC_y)/2 and V = |RF_x − RF_y|/2 (phasors, averaged over each rod pair). Secular frequencies come from the Floquet characteristic exponent β, f = β f_RF / 2, in x from (a, q) and in y from (−a, −q).
 
@@ -498,6 +536,12 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * OA-TOF: the ideal 10 ns pulse given as a pusher and puller waveform reproduces the analytic flight times to 1.4e-7. The SPICE pusher in `examples/spice` (15 Ω pulser, 150 nH wiring, 40 pF plate: about 30 % overshoot ringing at ~65 MHz) gives m/z 500 a resolution of about 15 600 against 15 900 for the ideal pulse in the same run.
 * Scope capture against a simulated Rigol on a local socket: screen and 600 000-point memory reads (in 250 000-point pieces), 8-bit BYTE and 12-bit DHO WORD formats, volts within half a code step.
 
+**Electrode load and sweeps**
+* Coax (1 mm rod in a 3 mm tube, axisymmetric grid at 0.05 mm): the capacitance per length is 50.64 pF/m against 2πε0/ln(b/a) = 50.64 pF/m, from the difference of two lengths so the ends cancel. A 2D coax gives 50.14 pF/m at 0.02 mm (first order in the grid). A dielectric of εr 4 filling the gap multiplies it by 4.
+* Quadrupole rods from the DXF (100 mm long): 16.6 pF per rod pair and 8.45 pF between the pairs. Driven ± through 10 kΩ at 1 MHz in ngspice, the rods get 0.536 of the swing, as the RC divider 1/√(1 + (ωR(C_AA − C_AB))²) says. At 50 Ω and 300 V the phase lag costs 2.4 V and the supply gives 47 mA peak.
+* Spreads: Gaussian, uniform and ripple samples have σ of ±/3, ±/√3 and ±/√2. A tolerance fit on a known linear result finds each setting's share to 1 % and gives a setting with no effect a share near zero (smoke test).
+* ESI inlet swept with the Sweeps tab (capillary to skimmer 15, 30 and 60 V): m/z 500 reaches the skimmer with 4.55, 5.75 and 7.61 eV.
+
 **Ion heating**
 * DC drift field (4 Torr N₂, m/z 500, K0 = 1): T_eff 301.9 K vs 302.0 K from theory at 20 V/cm, and 494 K vs 496 K at 200 V/cm.
 * Uniform RF field (2 Torr, 50 V/cm, 1 MHz, ωτ = 1.4): time-averaged T_eff 308.53 K vs 308.59 K from the damped-oscillator result.
@@ -548,8 +592,13 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * The beam in the pusher is generated from its size and divergence, which can be measured from an upstream model's exit ions (Stages). Between that exit and the pusher the ions only gain the DC step you set: no collisions, no transfer optics, no time structure from the upstream run. Ions leaving a gas-filled stage are taken as they leave it.
 
 **Imported waveforms, not modelled yet**
-* A waveform is a voltage, not a source: the electrodes don't load the circuit back (put the electrode capacitance in the SPICE model, as the example does). AC and noise analyses can't drive anything; use a `.tran`.
+* A waveform is a voltage, not a source. To see the electrodes load the circuit back, use the Device builder's electrode load (section 9), or put the exported subcircuit in your SPICE model. AC and noise analyses can't drive anything; use a `.tran`.
 * The scope's probe and bandwidth are part of what it captured. Capture is from Rigol scopes only, and one channel at a time is read with no averaging across shots (average on the scope).
+
+**Electrode load and sweeps, not modelled yet**
+* The load is capacitive: no electrode resistance, no inductance inside the device, no dielectric loss, and no losses or resonances above what the grid resolves. Wiring inductance is one value per net; put a real cable or transformer in your own driver model around the exported subcircuit.
+* The drive check needs ngspice (LTspice can run the exported netlist by hand). A 2D cross-section is the cross-section times its length, with no end effects.
+* Sweeps run the models one after another on this computer; a long chain times many trials takes that long (the tab shows the time left). Ripple is quasi-static: ripple as fast as the ions' transit belongs on the driver as a tone or an imported waveform.
 
 **Stages, not modelled yet**
 * Between two stages ions only gain the DC step you set: no transfer optics, no collisions in the gap, and no time structure (a quadrupole gives each arriving ion a new RF phase; the OA-TOF uses a continuous beam).
@@ -585,6 +634,8 @@ ION-SIM/
 │   ├── drivers.py          # electronics: outputs, RF, TWAVE gates, excitation tones, library
 │   ├── waveforms.py        # imported drive waveforms: SPICE raw / text results, running ngspice or LTspice
 │   ├── scope.py            # Rigol oscilloscope capture over LAN (SCPI socket) or USB (VISA)
+│   ├── circuit.py          # electrodes as a load: capacitance matrix, SPICE subcircuit, loaded drive with ngspice
+│   ├── sweep.py            # sweeps and tolerance studies: spreads, sampling, sensitivity
 │   ├── heating.py          # effective / internal ion temperature, fragmentation estimate
 │   ├── tof.py              # OA-TOF: pusher pulse, reflectron, exact gap-by-gap flight, resolution
 │   ├── stages.py           # stages: one model's exit ions (or the inlet's gas) start the next model
@@ -594,6 +645,7 @@ ION-SIM/
 │                           #   (the *_tab.py files, also the classic tabbed window), shared widgets,
 │                           #   device_tab.py and electrode_view.py (clickable electrodes),
 │                           #   drivers_tab.py, waveform_import.py (SPICE and scope dialogs), tof_tab.py,
+│                           #   sweep_tab.py (whole-chain sweeps and tolerance studies),
 │                           #   heating_view.py, ion_table.py (ion mixtures),
 │                           #   traj3d.py (3D ion paths with the electrodes), flow_movie.py (moving inlet
 │                           #   picture), speeds.py (gas and ion speeds along the instrument)

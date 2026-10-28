@@ -158,6 +158,24 @@ def species_legend(ax, species, **kw):
                   [s.name for s in species], fontsize=7, **kw)
 
 
+def flight_metrics(res, species, z_len=None):
+    """Headline numbers of a gas or vacuum flight, per species: {label: value}."""
+    out = {}
+    h = getattr(res, "heat", None)
+    for d in species_stats(res, species, z_len):
+        n = d["name"]
+        out[f"{n} transmitted (%)"] = 100 * d["through"]
+        out[f"{n} transit (ms)"] = d["transit"] * 1e3
+        if h is not None:
+            m = d["mask"] & (res.status >= 0)
+            if m.any():
+                out[f"{n} internal T peak (K)"] = float(np.median(h.tint_max[m]))
+                out[f"{n} T_eff peak (K)"] = float(np.median(h.teff_max[m]))
+                if h.model.ea_ev > 0:
+                    out[f"{n} intact (%)"] = 100 * float(np.mean(h.survival[m]))
+    return out
+
+
 def species_stats(res, species, z_len=None):
     """Per species: dict(name, n, through, lost, flying, transit, speed). transit in s."""
     sp = res.species if res.species is not None else np.zeros(len(res.status), int)

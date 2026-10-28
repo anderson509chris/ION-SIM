@@ -15,7 +15,7 @@ from ..collisions import GASES, AxialField, HardSphereGas, ccs_from_k0
 from .common import ParamForm, SimTab
 from .stage_picker import SourcePicker
 from .driver_store import get_store
-from .ion_table import IonTable, path_style, fate_caption, species_legend, species_stats, species_color
+from .ion_table import IonTable, path_style, fate_caption, species_legend, species_stats, flight_metrics, species_color
 from .traj3d import draw_traj3d
 from .speeds import ion_speeds
 
@@ -551,6 +551,7 @@ class QuadTab(SimTab):
                 self.log(f"  {d['name']} (m/z {d['mz']:g}, {d['z']}+): a = {a:.4f}, q = {q:.4f} "
                          f"({'Mathieu stable' if ok else 'Mathieu unstable'}); transmitted {d['through']:.0%}, "
                          f"hit rods {d['lost']:.0%}")
+            self.metrics = flight_metrics(res, species)
             self.last_table = (["ion", "species", "mz", "z", "status(1=through,2=hit)", "t_end_s", "x_m", "y_m", "z_m"],
                                [[k, species[res.species[k]].name, species[res.species[k]].mz, species[res.species[k]].z,
                                  int(res.status[k]), res.t_end[k], *res.final_pos[k]] for k in range(len(res.status))])
@@ -578,9 +579,11 @@ class QuadTab(SimTab):
         else:
             T, m, pred = out["T"], out["masses"], out["pred"]
             msg = f"Mass scan U = {out['U']:.2f} V, V = {out['V']:.2f} V: peak T = {T.max():.0%}"
+            self.metrics = {"peak transmission (%)": 100 * float(T.max())}
             if T.max() > 0:
                 half = T >= T.max() / 2
                 msg += f", FWHM {m[half].min():.2f}-{m[half].max():.2f}"
+                self.metrics.update({"peak m/z": float(m[np.argmax(T)]), "pass band FWHM (m/z)": float(m[half].max() - m[half].min())})
             if pred.any():
                 msg += f"; Mathieu-stable {m[pred].min():.2f}-{m[pred].max():.2f}"
             self.log(msg)

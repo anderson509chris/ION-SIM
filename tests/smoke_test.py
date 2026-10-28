@@ -279,6 +279,56 @@ for drv in (qa, qb):
 dpos = np.max(np.abs(fins[0][0].final_pos - fins[1][0].final_pos))
 check("driver waveform part", fins[1][1] == ["dc", "wave@RF as a trace#rf"] and dpos < 2e-6,
       f"parts {fins[1][1]}, paths agree to {dpos * 1e6:.2f} µm, transmission {fins[1][0].transmission:.0%}")
+# electrodes as a circuit load: a coax's capacitance per length from the field solve
+from ionsim.circuit import capacitance_matrix, device_capacitance, spice_subckt, loaded_drive, apply_load, clear_load
+from ionsim.waveforms import find_simulator
+from ionsim.axisym import AxisymGrid
+a_c, b_c, h_c = 1e-3, 3e-3, 0.05e-3
+c_in = []
+for L in (20e-3, 30e-3):                    # the difference of two lengths takes the ends out
+    gc = AxisymGrid(b_c + 2 * h_c, 0, L + 10e-3, h_c)
+    gc.add_annulus("in", 0, a_c, 5e-3, 5e-3 + L); gc.add_annulus("out", b_c, b_c + h_c, 1e-3, L + 9e-3)
+    c_in.append(capacitance_matrix(gc.solver(), gc.electrode, 2 * np.pi * h_c, [[1], [2]]))
+per_m = (c_in[1][0, 0] - c_in[0][0, 0]) / 10e-3
+theory = 2 * np.pi * 8.8541878128e-12 / np.log(b_c / a_c)
+check("electrode capacitance", abs(per_m / theory - 1) < 0.02 and abs(c_in[1][0, 1] - c_in[1][1, 0]) < 0.02 * abs(c_in[1][0, 1]),
+      f"coax {per_m * 1e12:.2f} pF/m vs 2πε0/ln(b/a) {theory * 1e12:.2f} pF/m")
+# the quadrupole's two rod pairs as a load: SPICE subcircuit, and the drive through 10 kΩ against RC theory
+cap = device_capacitance(dg)
+sub = spice_subckt(cap)
+c_eff = cap.C[0, 0] - cap.C[0, 1]           # rod pairs driven + and -: each charges C_AA - C_AB
+ok_c = cap.n == 2 and cap.asym < 0.02 and cap.mutual()[0, 1] > 0 and ".subckt IONSIM_LOAD" in sub and ".ends" in sub
+detail = f"{cap.C[0, 0] * 1e12:.2f} pF per rod pair, {cap.mutual()[0, 1] * 1e12:.2f} pF between pairs"
+if find_simulator("ngspice")[1]:
+    ld = loaded_drive(dev, cap, r_source=1e4, periods=3)
+    rep = ld.report()
+    want = 1 / np.sqrt(1 + (2 * np.pi * 1e6 * 1e4 * c_eff) ** 2)
+    got = rep[0]["swing_el"] / rep[0]["swing_src"]
+    apply_load(dev, ld)
+    with_load = list(part_values(dev)[0])
+    clear_load(dev)
+    ok_c = ok_c and abs(got / want - 1) < 0.02 and any(k.startswith("load#") for k in with_load) and not dev.load
+    detail += f"; through 10 kΩ at 1 MHz the rods get {got:.3f} of the swing, RC theory {want:.3f}"
+check("electrode load (SPICE)", ok_c, detail)
+# sweeps and tolerances: spreads, sampling, and a sensitivity fit that finds the setting that matters
+from ionsim import sweep as SWP
+rng_s = np.random.default_rng(3)
+sd_g = np.std(SWP.sample(10.0, 1.0, SWP.DISTRIBUTIONS[0], rng_s, 40000))
+sd_u = np.std(SWP.sample(10.0, 1.0, SWP.DISTRIBUTIONS[1], rng_s, 40000))
+sd_r = np.std(SWP.sample(10.0, 1.0, SWP.DISTRIBUTIONS[2], rng_s, 40000))
+Xs = SWP.tolerance_trials([100.0, 5.0], [1.0, 0.1], [SWP.DISTRIBUTIONS[0]] * 2, 400, seed=1)
+ys = 3.0 * (Xs[:, 0] - 100) + 0.1 * (Xs[:, 1] - 5) + 0.001 * rng_s.standard_normal(400)
+con, r2 = SWP.contributions(Xs, ys)
+slope = SWP.local_slope(np.linspace(0, 2, 11), np.linspace(0, 2, 11) ** 2, 1.0)
+same = SWP.SameRandom(5); same.on()
+draw1 = np.random.default_rng().random(3); same.restart(); draw2 = np.random.default_rng().random(3)
+seeded = np.random.default_rng(1).random()
+same.off()
+ok_same = np.array_equal(draw1, draw2) and seeded == np.random.default_rng(1).random() and np.random.default_rng.__name__ == "default_rng"
+check("sweep statistics", ok_same and all(abs(a / b - 1) < 0.03 for a, b in ((sd_g, SWP.sigma(1, SWP.DISTRIBUTIONS[0])),
+      (sd_u, SWP.sigma(1, SWP.DISTRIBUTIONS[1])), (sd_r, SWP.sigma(1, SWP.DISTRIBUTIONS[2]))))
+      and abs(con[0] / (3.0 * Xs[:, 0].std()) - 1) < 0.01 and abs(con[1]) < 0.01 and r2 > 0.99 and abs(slope - 2) < 0.05,
+      f"σ {sd_g:.3f} / {sd_u:.3f} / {sd_r:.3f}; fit share {con[0]:.2f} and {con[1]:.4f}, R² {r2:.3f}")
 
 # the OA-TOF pushed by imported pusher / puller waveforms: the ideal pulse as a trace gives the same flight times,
 # and the SPICE pulse (with its ringing) still flies
@@ -323,7 +373,7 @@ check("drive from a scope capture", drv.output("Pusher").wave == "DS1104Z CHAN1"
       and abs(tof_m.on_levels()[0] - 600) < 15, f"pusher on at {tof_m.on_levels()[0]:.0f} V from {drv.waves[0]}")
 from ionsim.gui.workspace import Workspace, TEMPLATES
 ws = Workspace(models=[(t, None) for t in TEMPLATES], persist=False)
-check("workspace", len(ws.models) == len(TEMPLATES) and ws.tabs.count() == len(TEMPLATES) + 3
+check("workspace", len(ws.models) == len(TEMPLATES) and ws.tabs.count() == len(TEMPLATES) + 4
       and ws.tabs.currentWidget() is ws.home, f"{len(ws.models)} model tabs, opens on Home")
 # stages: an OA-TOF model takes its beam and ions from the ions that left a quadrupole model
 from ionsim.stages import ExitIons
@@ -392,6 +442,27 @@ same = all(settings_io.save(a.ctl.scroll.widget()) == settings_io.save(b.ctl.scr
            for a, b in zip(ws3.models, ws4.models))
 check("setup file", same and not notes and [ws4.source_of(m).name if ws4.source_of(m) else None for m in ws4.models]
       == [None, "In", "F", "Q"], f"{len(ws4.models)} models, {os.path.getsize(setup) // 1024} kB")
+# sweeps tab: vary a voltage of a model and a driver value, run, and put them back
+from ionsim.gui.sweep_tab import Knob, driver_knobs
+ws6 = Workspace(models=[("ESI inlet capillary", "In")], persist=False)
+sw6 = ws6.sweeps
+key6 = "First vacuum stage / Capillary − skimmer voltage"
+w6 = settings_io.inputs(ws6.models[0].ctl.scroll.widget())[key6]
+v6 = w6.value()
+sw6.add_knob(Knob("input", "In", key6, "In: capillary − skimmer"))
+dk = driver_knobs(dr.store.get(name))[0]
+d_before = sw6.get(dk)
+sw6.set(dk, d_before + 1.0); d_moved = sw6.get(dk); sw6.set(dk, d_before)
+sw6.table.item(0, 2).setText(f"{v6 / 2:g}"); sw6.table.item(0, 3).setText(f"{v6 * 2:g}")
+sw6.points.setValue(2); sw6.renominal.setChecked(False)
+sw6.run()
+t_sw = time.time()
+while sw6._busy and time.time() - t_sw < 300:
+    app.processEvents(); time.sleep(0.01)
+e6 = sw6.column("In: m/z 500 energy at skimmer (eV)")
+check("sweeps tab", len(sw6.data["results"]) == 3 and e6[1] < e6[0] < e6[2] and w6.value() == v6
+      and d_moved == d_before + 1.0 and sw6.get(dk) == d_before and len(sw6.last_table[1]) == 3,
+      f"energy at the skimmer {e6[1]:.2f} / {e6[0]:.2f} / {e6[2]:.2f} eV for {v6 / 2:g} / {v6:g} / {v6 * 2:g} V")
 # instrument tab: tag the parts of one STEP, get linked models in order along the ion path
 ws5 = Workspace(models=[], persist=False)
 it = ws5.instrument

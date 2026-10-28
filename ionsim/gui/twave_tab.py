@@ -163,6 +163,11 @@ class TwaveTab(SimTab):
                          f"resolving power {m / w:.0f}, arrived {np.isfinite(x).mean():.0%}")
             for j, r in enumerate(rpp):
                 self.log(f"Rpp({names[j]} vs {names[j + 1]}) = {r:.2f}")
+            self.metrics = {}
+            for name, x, m, w in zip(names, t, means, widths):
+                self.metrics.update({f"{name} arrival (ms)": m * 1e3, f"{name} resolving power": m / w if w else np.nan,
+                                     f"{name} arrived (%)": 100 * float(np.isfinite(x).mean())})
+            self.metrics.update({f"Rpp {names[j]} vs {names[j + 1]}": r for j, r in enumerate(rpp)})
             self.last_table = (["species", "K0", "arrival_s"],
                                [[names[s], k0s[s], v] for s in range(len(t)) for v in t[s]])
             fig = self.plots.fig("Arrival times")

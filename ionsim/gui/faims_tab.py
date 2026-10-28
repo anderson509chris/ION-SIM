@@ -149,6 +149,7 @@ class FaimsTab(SimTab):
                 T = r.transmission[i]
                 pk = r.cv[np.argmax(T)] if T.max() > 0 else np.nan
                 cen = np.sum(T * r.cv) / T.sum() if T.sum() > 0 else np.nan
+                self.metrics.update({f"{s.name} CV peak (V)": float(pk), f"{s.name} max transmission (%)": 100 * float(T.max())})
                 self.log(f"{s.name}: theory CV {r.cv_theory[i]:.2f} V, simulated peak {pk:.2f} V "
                          f"(centroid {cen:.2f} V), max transmission {T.max():.0%}")
             ax.set_xlabel("compensation voltage (V)"); ax.set_ylabel("transmission (%)")

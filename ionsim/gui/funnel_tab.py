@@ -16,7 +16,7 @@ from .common import ParamForm, SimTab
 from .stage_picker import SourcePicker
 from .electrode_view import ElectrodeView, INSULATOR
 from .heating_view import HeatingBox, draw_heating
-from .ion_table import IonTable, species_color, path_style, fate_caption, species_legend, species_stats
+from .ion_table import IonTable, species_color, path_style, fate_caption, species_legend, species_stats, flight_metrics
 from .traj3d import draw_traj3d
 from .speeds import ion_speeds, gas_line
 from ..ions import IonSpecies
@@ -599,6 +599,7 @@ class FunnelTab(SimTab):
             z0, z1 = out["z"]
             self.speeds = {"span": (z0, z1), "gas": gas_line(out["gas_u"], out["start"], z0, z1),
                            "ions": ion_speeds(res, species, z0, z1)}
+            self.metrics = flight_metrics(res, species)
             self.set_exit(ExitIons.from_result(f"funnel run at {out['gas']['p']:g} Torr", res, species,
                                                out["start"], out["gas"]["p"], out["gas"]["T"]))
             self._draw_traj(out)
@@ -634,6 +635,7 @@ class FunnelTab(SimTab):
                         extra += f", intact {np.mean(h.survival[sel]):.0%}"
                 self.log(f"  m/z {m:8.1f}: transmitted {t:5.0%}, lost {l:5.0%}{extra}")
             self.last_table = (["mz", "K0", "transmitted", "lost", "trapped"], [list(r) for r in zip(mz, out["K0"], T, L, F)])
+            self.metrics = {f"m/z {m:g} transmitted (%)": 100 * float(t) for m, t in zip(mz, T)}
 
     def _draw_potential(self, out):
         fld, el = out["field"], out["el"]

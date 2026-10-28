@@ -110,6 +110,10 @@ class InletTab(SimTab):
                      f"peak T_eff {d['teff'].max():.0f} K")
             rows.append([i.name, i.mz, i.charge_state, i.K0, d["v_final"], d["ke_final"], d["t_final"], d["teff"].max()])
         self.last_table = (["ion", "mz", "z", "K0", "v_skimmer_m_s", "KE_eV", "transit_s", "Teff_max_K"], rows)
+        self.metrics = {"gas flow (slm)": float(inl.flow_slm)}
+        for d in res:
+            self.metrics.update({f"{d['ion'].name} energy at skimmer (eV)": float(d["ke_final"]),
+                                 f"{d['ion'].name} speed at skimmer (m/s)": float(d["v_final"])})
         self.exit_gas = ExitGas(f"inlet run ({inl.flow_slm:.2f} slm)", inl.flow_slm, inl.p_back, inl.t_atm,
                                 [IonSpecies(d["ion"].name, d["ion"].mz, d["ion"].charge_state, d["ion"].K0, 1) for d in res],
                                 [float(d["v_final"]) for d in res])

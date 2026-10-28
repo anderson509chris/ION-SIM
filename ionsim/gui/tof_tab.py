@@ -477,6 +477,10 @@ class TofTab(SimTab):
     def _show_shot(self, out):
         res, tof, beam, species = out["res"], out["tof"], out["beam"], out["species"]
         stats = res.stats()
+        self.metrics = {}
+        for s in stats:
+            self.metrics.update({f"{s['name']} resolution": s["resolution"], f"{s['name']} flight time (µs)": s["t_mean"] * 1e6,
+                                 f"{s['name']} peak FWHM (ns)": s["fwhm"] * 1e9, f"{s['name']} detected (%)": 100 * s["transmission"]})
         self._draw_layout(tof, beam, res)
         # arrival-time peaks, one panel per species
         fig = self.plots.fig("Arrival times", show=False)
@@ -584,6 +588,8 @@ class TofTab(SimTab):
             ax.set_title(f"{out['species'][0].name}: best R = {out['R'][j]:.0f} at {out['vals'][j]:.4g}", fontsize=9)
             self.log(f"--- Scan of {out['label']}: best resolution {out['R'][j]:.0f} at {out['vals'][j]:.4g} ---")
         self.plots.draw("Scan")
+        if np.any(np.isfinite(out["R"])):
+            self.metrics = {"best resolution": float(np.nanmax(out["R"]))}
         self.last_table = ([out["label"], "resolution", "flight time (s)"],
                            [[v, r, t] for v, r, t in zip(out["vals"], out["R"], out["T"])])
 

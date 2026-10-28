@@ -2,7 +2,8 @@
 
 Run:  python docs/make_screenshots.py      (opens the window, runs every tab, ~2 min)
       add --workspace to redo only the workspace and Instrument tab shots, --3d only the 3D path views,
-      --speeds only the chain run with the speed views, --waveforms only the SPICE / scope drive shots
+      --speeds only the chain run with the speed views, --waveforms only the SPICE / scope drive shots,
+      --load only the electrode load (capacitance, loaded drive) and the Sweeps tab shots
 """
 import os, sys, tempfile
 os.environ.setdefault("IONSIM_DRIVERS", os.path.join(tempfile.mkdtemp(), "drivers.json"))   # the default drivers
@@ -113,6 +114,7 @@ def go():
     run(t)
     shot(t, "Scan", "tof_scan")
     waveforms()
+    signal_integrity()
     instrument()
     workspace()
     app.quit()
@@ -183,6 +185,59 @@ def workspace():
     ws.close()
 
 
+def signal_integrity():
+    """Device builder: the combiner-wired TWAVE board as a circuit load (capacitance and crosstalk, then the drive
+    through 50 Ω checked with ngspice). Sweeps tab: quadrupole → OA-TOF, a sweep and a tolerance study."""
+    d = w.device
+    w.tabs.setCurrentWidget(d)
+    d.open_setup_from(os.path.join(os.path.dirname(__file__), "..", "examples", "geometry", "twave_board_combiner.ionsim"))
+    d.solve_load(); settle(5)
+    while d._thread is not None:
+        settle(1)
+    shot(d, "Capacitance", "device_capacitance")
+    d.check_drive(); settle(5)
+    while d._thread is not None:
+        settle(1)
+    shot(d, "Loaded drive", "device_loaded_drive")
+
+    from ionsim.gui.workspace import Workspace
+    from ionsim.gui.sweep_tab import Knob
+    ws = Workspace(models=[("Quadrupole mass filter", "Quad"), ("OA-TOF", "TOF", "Quad")], persist=False)
+    ws.resize(1500, 900); ws.show(); settle()
+    q, t = ws.models
+    q.ctl.geom.set("length", 60)
+    sw = ws.sweeps
+    ws.tabs.setCurrentWidget(sw); settle()
+
+    def study():
+        sw.run(); settle(5)
+        while sw._busy:
+            settle(1)
+        settle(30)
+    for owner, key in (("TOF", "Flight tube / Reflectron back plate"), ("TOF", "Pusher and acceleration / Pusher pulse")):
+        sw.add_knob(Knob("input", owner, key, f"{owner}: {key.split(' / ')[-1]}"))
+    for r, (lo, hi) in enumerate(((4875, 5075), (570, 630))):
+        sw.table.item(r, 2).setText(str(lo)); sw.table.item(r, 3).setText(str(hi))
+    sw.points.setValue(9)
+    study()
+    sw.metric.setCurrentText("TOF: m/z 500 resolution"); settle()
+    sw.plots.setCurrentIndex(0); settle()
+    ws.grab().save(os.path.join(OUT, "sweeps_sweep.png")); print("saved sweeps_sweep")
+    sw.add_knob(Knob("input", "Quad", "Operating point / U (DC)", "Quad: U (DC)"))
+    sw.add_knob(Knob("input", "TOF", "Pusher and acceleration / Pusher plate DC (beam potential)", "TOF: Pusher plate DC"))
+    for r, (pm, unit, dist) in enumerate(((0.1, "%", 0), (0.2, "%", 0), (0.5, "%", 1), (0.5, "abs", 2))):
+        sw.table.item(r, 4).setText(str(pm)); sw.table.cellWidget(r, 5).setCurrentText(unit)
+        sw.table.cellWidget(r, 6).setCurrentIndex(dist)
+    sw.mode.setCurrentIndex(1); sw.trials.setValue(40)
+    study()
+    sw.metric.setCurrentText("TOF: m/z 500 resolution"); settle()
+    sw.plots.setCurrentIndex(1); settle()
+    ws.grab().save(os.path.join(OUT, "sweeps_tolerance.png")); print("saved sweeps_tolerance")
+    sw.plots.setCurrentIndex(2); settle()
+    ws.grab().save(os.path.join(OUT, "sweeps_sensitivity.png")); print("saved sweeps_sensitivity")
+    ws.close()
+
+
 def instrument():
     """The Instrument tab: the example STEP with its parts tagged as stages, side and top cuts, and 3D."""
     from ionsim.gui.workspace import Workspace
@@ -237,7 +292,12 @@ def only_waveforms():
     app.quit()
 
 
+def only_load():
+    signal_integrity()
+    app.quit()
+
+
 QtCore.QTimer.singleShot(500, only_workspace if "--workspace" in sys.argv else only_3d if "--3d" in sys.argv
                          else only_speeds if "--speeds" in sys.argv else only_waveforms if "--waveforms" in sys.argv
-                         else go)
+                         else only_load if "--load" in sys.argv else go)
 app.exec()

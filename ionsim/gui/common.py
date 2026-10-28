@@ -149,6 +149,7 @@ class SimTab(QtWidgets.QWidget):
         self.last_table = None     # (header, rows) for CSV export
         self.exit_ions = None      # stages.ExitIons of the last run, for the next stage
         self.speeds = None         # gas and ion speeds along the axis from the last run (speeds.py)
+        self.metrics = {}          # the last run's headline numbers, {label: value} (sweeps and tolerances read them)
 
     def set_exit(self, ex):
         self.exit_ions = ex
@@ -187,6 +188,7 @@ class SimTab(QtWidgets.QWidget):
         on_done = self._on_done
         cancelled = self._worker.cancelled
         self._cleanup()
+        self.metrics = {}
         self.bar.setValue(100)
         self.status.setText("Stopped (partial results shown)" if cancelled else "Done")
         on_done(result)
