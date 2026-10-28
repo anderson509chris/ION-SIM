@@ -122,26 +122,9 @@ class Inlet:
         Ts, Ps = T[-1], P[-1]
         P0e = Ps * ((g + 1) / 2) ** (g / (g - 1))                 # stagnation pressure of the jet
         self.x_mach_disk = 0.67 * D * np.sqrt(P0e / (self.p_back * TORR))
+        self._jet0 = (T0, P0e)
         xs = np.linspace(0, max(self.skim_dist, 1e-6), 800)
-        r = xs / D
-        near = 1.0 + 3.337 * r ** 2 - 1.541 * r ** 3
-        A, x0 = 3.65, 0.40
-        far_arg = np.maximum(r - x0, 1e-6) ** (g - 1)
-        far = A * far_arg - 0.5 * (g + 1) / (g - 1) / (A * far_arg)
-        w = np.clip((r - 0.7) / 0.5, 0, 1)
-        Mj = np.maximum.accumulate(np.maximum((1 - w) * near + w * far, 1.0))
-        Tj = T0 / (1 + 0.5 * (g - 1) * Mj ** 2)
-        Pj = P0e * (Tj / T0) ** (g / (g - 1))
-        uj = Mj * np.sqrt(g * R * Tj)
-        past = xs >= self.x_mach_disk
-        if past.any():                              # normal shock, then subsonic at back pressure
-            i = np.argmax(past)
-            M_md = Mj[i]
-            M2 = np.sqrt((1 + 0.5 * (g - 1) * M_md ** 2) / (g * M_md ** 2 - 0.5 * (g - 1)))
-            T2 = T0 / (1 + 0.5 * (g - 1) * M2 ** 2)
-            Mj[past], Tj[past] = M2, T2
-            uj[past] = M2 * np.sqrt(g * R * T2)
-            Pj[past] = self.p_back * TORR
+        Mj, Tj, uj, Pj = self.jet_centre(xs)
         self.jet = dict(x=L + xs, M=Mj, T=Tj, u=uj, P=Pj, N=Pj / (K_B * Tj))
         self.u_terminal = np.sqrt(2 * g / (g - 1) * R * T0)
 
@@ -175,6 +158,85 @@ class Inlet:
     def gas_at(self, x):
         ax = self.axis
         return {k: np.interp(x, ax["x"], ax[k]) for k in ("u", "T", "N", "P", "M")}
+
+    def jet_centre(self, xs):
+        """Mach number, T, speed and pressure on the jet axis at distances xs (m, increasing) from the
+        capillary exit: Ashkenas-Sherman, then a normal shock at the Mach disk and subsonic gas at the
+        back pressure."""
+        gs = self.gas; g = gs.gamma; R = gs.R
+        T0, P0e = self._jet0
+        D = self.diameter
+        r = np.asarray(xs, float) / D
+        near = 1.0 + 3.337 * r ** 2 - 1.541 * r ** 3
+        A, x0 = 3.65, 0.40
+        far_arg = np.maximum(r - x0, 1e-6) ** (g - 1)
+        far = A * far_arg - 0.5 * (g + 1) / (g - 1) / (A * far_arg)
+        w = np.clip((r - 0.7) / 0.5, 0, 1)
+        Mj = np.maximum.accumulate(np.maximum((1 - w) * near + w * far, 1.0))
+        Tj = T0 / (1 + 0.5 * (g - 1) * Mj ** 2)
+        Pj = P0e * (Tj / T0) ** (g / (g - 1))
+        uj = Mj * np.sqrt(g * R * Tj)
+        past = np.asarray(xs) >= self.x_mach_disk
+        if past.any():                              # normal shock, then subsonic at back pressure
+            i = np.argmax(past)
+            M_md = Mj[i]
+            M2 = np.sqrt((1 + 0.5 * (g - 1) * M_md ** 2) / (g * M_md ** 2 - 0.5 * (g - 1)))
+            T2 = T0 / (1 + 0.5 * (g - 1) * M2 ** 2)
+            Mj[past], Tj[past] = M2, T2
+            uj[past] = M2 * np.sqrt(g * R * T2)
+            Pj[past] = self.p_back * TORR
+        return Mj, Tj, uj, Pj
+
+    # ---------- the flow off the axis (for pictures; the ions fly on the axis tables above) ----------
+    def jet_radius(self, xi):
+        """Radius of the jet boundary (barrel shock) at xi metres after the exit: from the exit radius
+        out to 0.375 x_M (a barrel about 0.75 x_M across) at the Mach disk, then held."""
+        a, xm = self.diameter / 2, self.x_mach_disk
+        s = np.clip(np.asarray(xi, float) / xm, 0, 1)
+        return a + (max(0.375 * xm, a) - a) * np.sin(0.5 * np.pi * s) ** 0.6
+
+    def velocity_2d(self, x, r):
+        """Gas velocity (u_x, u_r) in m/s at axial x and radius r (m; r may be negative, u_r follows its
+        sign), on the inlet's axis coordinates. Spray region: sink flow into the capillary entrance.
+        Capillary: the 1D mean speed with a laminar (parabolic) or turbulent (1/7 power) profile, zero in
+        the wall. Jet: radial from the exit inside the barrel, with the axis speed at the same distance;
+        past the Mach disk the subsonic core slows over a few x_M; still background gas outside."""
+        x, r = np.broadcast_arrays(np.asarray(x, float), np.asarray(r, float))
+        ux, ur = np.zeros(x.shape), np.zeros(x.shape)
+        a, L = self.diameter / 2, self.length
+        ar = np.abs(r)
+        sp = x < 0
+        if sp.any():
+            rho = np.hypot(x[sp], r[sp])
+            u0 = self.cap["u"][0]
+            mag = u0 * a ** 2 / (a ** 2 + 2 * rho ** 2)
+            ux[sp] = -mag * x[sp] / np.maximum(rho, 1e-12)
+            ur[sp] = -mag * r[sp] / np.maximum(rho, 1e-12)
+        cap = (x >= 0) & (x <= L) & (ar < a)
+        if cap.any():
+            um = np.interp(x[cap], self.cap["x"], self.cap["u"])
+            s = ar[cap] / a
+            prof = 2 * (1 - s ** 2) if self.reynolds < 2300 else (60 / 49) * (1 - s) ** (1 / 7)
+            ux[cap] = um * prof
+        jet = x > L
+        if jet.any():
+            xi, rr = x[jet] - L, r[jet]
+            xm = self.x_mach_disk
+            inside = np.abs(rr) <= self.jet_radius(xi)
+            rho = np.hypot(xi, rr)
+            before = xi < xm
+            u = np.zeros(xi.shape)
+            if before.any():
+                u[before] = self.jet_centre(np.sort(rho[before]))[2][np.argsort(np.argsort(rho[before]))]
+            after = ~before
+            if after.any():
+                u2 = self.jet_centre(np.array([0.0, xm]))[2][-1]
+                u[after] = u2 * np.exp(-(xi[after] - xm) / (2 * xm))
+            u = np.where(inside, u, 0.0)
+            dirx = np.where(before, xi / np.maximum(rho, 1e-12), 1.0)
+            dirr = np.where(before, rr / np.maximum(rho, 1e-12), 0.0)
+            ux[jet], ur[jet] = u * dirx, u * dirr
+        return ux, ur
 
 
 @dataclass

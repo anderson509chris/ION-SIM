@@ -298,4 +298,38 @@ ax3 = draw_traj3d(fig3, path3, [("b", "-")] * 2, gb)
 check("3D path view", 1.6 < rr.min() < 2.2 and 2.8 < rr.max() < 3.5 and vb[..., 1].min() > 0.85 and vb[..., 1].max() < 2.2
       and vb[..., 0].min() > 1.85 and vb[..., 0].max() < 8.15 and len(ax3.collections) == 1,
       f"ring r {rr.min():.2f}-{rr.max():.2f} mm, box x {vb[..., 1].min():.2f}-{vb[..., 1].max():.2f} mm")
+# inlet flow picture: the capillary profile carries the 1D mean flow, the jet is zero outside its barrel,
+# and the moving picture moves gas and ions on
+from ionsim.inlet import Inlet, fly_inlet, DEFAULT_IONS
+from ionsim.gui.flow_movie import FlowMovie
+inl_f = Inlet()
+a_f, L_f = inl_f.diameter / 2, inl_f.length
+rr_f = np.linspace(0, a_f, 2001)
+ux_f, _ = inl_f.velocity_2d(np.full_like(rr_f, L_f / 2), rr_f)
+mean_f = np.trapezoid(2 * rr_f * ux_f, rr_f) / a_f ** 2
+u1d_f = np.interp(L_f / 2, inl_f.cap["x"], inl_f.cap["u"])
+xi_f = 1e-3
+on_f = inl_f.velocity_2d(L_f + xi_f, 0.0)[0]
+off_f = np.hypot(*inl_f.velocity_2d(L_f + xi_f, 2 * inl_f.jet_radius(xi_f)))
+movie = FlowMovie(Figure())
+movie.show(inl_f, fly_inlet(inl_f, DEFAULT_IONS[:2]))
+g0 = movie.panels[1].gx.copy()
+movie.step(0.5)
+ion_x = movie.ion_dots[1].get_offsets()[:, 0]
+check("inlet flow picture", abs(mean_f / u1d_f - 1) < 0.01 and abs(on_f / inl_f.jet_centre(np.array([xi_f]))[2][0] - 1) < 1e-6
+      and off_f == 0 and np.mean(movie.panels[1].gx > g0) > 0.5 and np.all(np.isfinite(ion_x)) and np.all(ion_x > 0),
+      f"capillary mean {mean_f:.1f} vs 1D {u1d_f:.1f} m/s; jet axis {float(on_f):.0f} m/s at 1 mm")
+# speeds along the instrument: ion speed from the recorded paths, stages laid end to end
+from ionsim.gui.speeds import ion_speeds
+from types import SimpleNamespace
+tt = np.linspace(0, 1e-3, 101)
+fake = SimpleNamespace(traj=np.zeros((101, 4, 3)), traj_t=tt, species=np.array([0, 0, 1, 1]))
+fake.traj[:, :2, 2] = 50.0 * tt[:, None]; fake.traj[:, 2:, 2] = 20.0 * tt[:, None]
+spd = ion_speeds(fake, [IonSpecies("a", 100, 1, 1, 2), IonSpecies("b", 200, 1, 1, 2)], 0, 0.05, nbins=10)
+for m_, span in zip(ws3.models, ((-5e-3, 63e-3), (0.0, 0.1), (0.0, 0.2), None)):
+    m_.ctl.speeds = None if span is None else {"span": span, "gas": None, "ions": []}
+rows_s = ws3.speed_rows()
+check("speeds along the instrument", np.allclose(spd[0][2], 50) and np.allclose(spd[1][2], 20)
+      and [r[0] for r in rows_s] == ["In", "F", "Q"] and abs(rows_s[1][2] - 0.073) < 1e-9 and abs(rows_s[2][2] - 0.178) < 1e-9,
+      ", ".join(f"{r[0]} at {r[2] * 1e3:.0f} mm" for r in rows_s))
 print(f"all good in {time.time() - t0:.0f} s")

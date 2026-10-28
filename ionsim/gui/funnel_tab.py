@@ -18,6 +18,7 @@ from .electrode_view import ElectrodeView, INSULATOR
 from .heating_view import HeatingBox, draw_heating
 from .ion_table import IonTable, species_color, path_style, fate_caption, species_legend, species_stats
 from .traj3d import draw_traj3d
+from .speeds import ion_speeds, gas_line
 from ..ions import IonSpecies
 
 TYPES = ["Ring funnel (stacked PCBs)", "Planar funnel (two boards)", "Imported CAD (STEP / STL / OBJ)"]
@@ -553,7 +554,7 @@ class FunnelTab(SimTab):
                                   progress=progress, current=current, sc_iterations=sc_it, heating=heat_model)
             return {"key": key, "grid": grid, "solver": solver, "field": fld, "res": res, "mzi": mzi, "mz": mz,
                     "K0": K0, "mode": mode, "t_solve": t_solve, "cached": bool(cache), "start": start, "z": (z0, z1),
-                    "gas": gs, "io": io, "el": el, "species": species, "ref": ref, "flow": flow, "flow_key": flow_key, "r_in": r_in,
+                    "gas": gs, "io": io, "el": el, "species": species, "ref": ref, "flow": flow, "flow_key": flow_key, "r_in": r_in, "gas_u": gas_u,
                     "current": current, "t_fly": time.time() - t1}
 
         # while the geometry is unchanged the grid and solver are reused: new voltages only re-solve
@@ -595,6 +596,9 @@ class FunnelTab(SimTab):
                             f"{np.sqrt(np.mean(np.sum((res.final_pos[tr, :2] - out['start']) ** 2, 1))) / MM:.3f} mm" if tr.any() else ""))
                 if res.heat is not None:
                     self.log(f"  Heating {d['name']}: " + res.heat.summary(d["mask"] & (st >= 0)))
+            z0, z1 = out["z"]
+            self.speeds = {"span": (z0, z1), "gas": gas_line(out["gas_u"], out["start"], z0, z1),
+                           "ions": ion_speeds(res, species, z0, z1)}
             self.set_exit(ExitIons.from_result(f"funnel run at {out['gas']['p']:g} Torr", res, species,
                                                out["start"], out["gas"]["p"], out["gas"]["T"]))
             self._draw_traj(out)

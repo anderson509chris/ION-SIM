@@ -445,7 +445,40 @@ class Workspace(QtWidgets.QMainWindow):
             self._chain = self._chain_now = None
             self.statusBar().showMessage(f"'{m.name}' did not start (see its results box); the stages after it were not run", 8000)
 
+    def speed_rows(self):
+        """The models that have run, in order along the instrument, each with where its axis starts: at
+        its tagged place in the Instrument tab's CAD model, or else after the stage before it."""
+        order, seen = [], set()
+
+        def chain_of(m):
+            c, x = [m], self.source_of(m)
+            while x is not None and x not in c:
+                c.insert(0, x); x = self.source_of(x)
+            return c
+        for m in sorted(self.models, key=lambda m: -len(chain_of(m))):      # the longest chains first
+            for x in chain_of(m):
+                if x not in seen:
+                    seen.add(x); order.append(x)
+        tagged = [m for m in order if getattr(m, "region", None)]
+        if tagged:
+            order = sorted(tagged, key=lambda m: m.region[0]) + [m for m in order if m not in tagged]
+        rows, end = [], None
+        for m in order:
+            sp = m.ctl.speeds
+            if sp is None:
+                continue
+            z0, z1 = sp["span"]
+            if getattr(m, "region", None):
+                off = m.region[0] * 1e-3 - z0
+            else:
+                off = (0.0 if end is None else end + 5e-3) - z0
+            rows.append((m.name, sp, off))
+            end = z1 + off
+        return rows
+
     def _ran(self, m, ok):
+        if ok:
+            self.instrument.show_speeds(self.speed_rows())
         if self._chain is None or m is not self._chain_now:
             return
         if not ok:

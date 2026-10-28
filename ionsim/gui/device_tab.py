@@ -19,6 +19,7 @@ from .driver_store import get_store
 from .heating_view import HeatingBox, draw_heating
 from .ion_table import IonTable, species_color, path_style, fate_caption, species_legend, species_stats
 from .traj3d import draw_traj3d
+from .speeds import ion_speeds, gas_line
 from ..ions import IonSpecies
 
 MM = 1e-3
@@ -710,7 +711,7 @@ class DeviceTab(SimTab):
                                    progress=lambda f: progress(0.3 + 0.7 * f),
                                    current=ex["I"] * 1e-9, sc_iterations=int(ex["it"]), heating=heat_model)
             return dict(grid=g, field=fld, res=res, info=info, built=dg is None, t_build=t1 - t0, t_solve=t2 - t1,
-                        t_fly=time.time() - t2, io=io, key=key, flow=flow, flow_key=flow_key, ex=ex, species=species)
+                        t_fly=time.time() - t2, io=io, key=key, flow=flow, flow_key=flow_key, ex=ex, species=species, gas_u=gas_u)
 
         self.start(job, self._show, "Solving fields and flying ions…" if dg is None else "Re-solving voltages and flying ions…")
 
@@ -755,6 +756,9 @@ class DeviceTab(SimTab):
                            [[species[k].name, species[k].mz, species[k].z, int(s), *(p / MM), t * 1e3]
                             for k, s, p, t in zip(res.species, st, res.final_pos, res.t_end)])
         io = out["io"]
+        z0, z1 = info["z_start"], info["z_end"]
+        self.speeds = {"span": (z0, z1), "gas": gas_line(out["gas_u"], (io["x0"] * MM, io["y0"] * MM), z0, z1),
+                       "ions": ion_speeds(res, species, z0, z1)}
         self.set_exit(ExitIons.from_result(f"device run at {io['p']:g} Torr", res, species,
                                            (io["x0"] * MM, io["y0"] * MM), io["p"], io["T"]))
         self._draw_potential(fld, res.space_charge)

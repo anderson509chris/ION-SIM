@@ -1,16 +1,29 @@
 """ESI inlet capillary tab."""
 import numpy as np
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from ..inlet import Inlet, InletIon, fly_inlet, DEFAULT_IONS, TORR
 from ..ions import IonSpecies
 from ..stages import ExitGas
 from .common import ParamForm, SimTab
+from .flow_movie import FlowMovie
 
 
 class InletTab(SimTab):
     def __init__(self, parent=None):
-        super().__init__(["Gas flow", "Ion velocity", "Ion energy", "Effective temperature"], parent)
+        super().__init__(["Flow picture", "Gas flow", "Ion velocity", "Ion energy", "Effective temperature"], parent)
+        self.movie = FlowMovie(self.plots.figs["Flow picture"])
+        bar = QtWidgets.QWidget(); row = QtWidgets.QHBoxLayout(bar); row.setContentsMargins(0, 0, 0, 0)
+        self.play = QtWidgets.QPushButton("Pause"); self.play.setCheckable(True)
+        self.play.setToolTip("Stop or restart the moving gas and ions")
+        self.play.toggled.connect(lambda on: self.play.setText("Play" if on else "Pause"))
+        self.speed = QtWidgets.QComboBox(); self.speed.addItems(["0.25×", "0.5×", "1×", "2×", "4×"])
+        self.speed.setCurrentText("1×"); self.speed.setProperty("ionsim_nosave", True)
+        row.addWidget(self.play); row.addWidget(QtWidgets.QLabel("Speed")); row.addWidget(self.speed); row.addStretch(1)
+        self.plots.add_controls("Flow picture", bar)
+        self._timer = QtCore.QTimer(self); self._timer.setInterval(50)
+        self._timer.timeout.connect(self._tick)
+        self.plots.hint("Flow picture", "Press Run to see the gas and ions move from the spray into the vacuum chamber.")
         self.spray = ParamForm("ESI spray region", [
             ("gap", "Emitter to inlet", 5.0, 0.2, 50, 2, 0.5, "mm"),
             ("tip", "Emitter tip radius", 50, 1, 1000, 0, 5, "µm"),
@@ -100,6 +113,9 @@ class InletTab(SimTab):
         self.exit_gas = ExitGas(f"inlet run ({inl.flow_slm:.2f} slm)", inl.flow_slm, inl.p_back, inl.t_atm,
                                 [IonSpecies(d["ion"].name, d["ion"].mz, d["ion"].charge_state, d["ion"].K0, 1) for d in res],
                                 [float(d["v_final"]) for d in res])
+        on = inl.axis["x"] <= inl.x_end
+        self.speeds = {"span": (-inl.spray_gap, inl.x_end), "gas": (inl.axis["x"][on], inl.axis["u"][on]),
+                       "ions": [(d["ion"].name, d["x"], d["v"]) for d in res]}
         self.exit_changed.emit()
 
         ax_ = inl.axis
@@ -117,7 +133,7 @@ class InletTab(SimTab):
         for name, key, lab in (("Ion velocity", "v", "ion speed (m/s)"),
                                ("Ion energy", "ke", "kinetic energy (eV)"),
                                ("Effective temperature", "teff", "T_eff (K)")):
-            fig = self.plots.fig(name, show=(name == "Ion energy"))
+            fig = self.plots.fig(name, show=False)
             ax = fig.add_subplot(111)
             for d in res:
                 ax.plot(d["x"] * 1e3, d[key], label=d["ion"].name)
@@ -128,6 +144,15 @@ class InletTab(SimTab):
             ax.set_xlabel("x (mm), 0 = capillary entrance"); ax.set_ylabel(lab)
             self._marks(ax, inl); ax.legend(fontsize=8)
             self.plots.draw(name)
+        self.movie.show(inl, res)
+        self.plots.setCurrentIndex(0)
+        self._timer.start()
+
+    def _tick(self):
+        """Move the flow picture on while it is in sight and playing."""
+        if self.play.isChecked() or not self.plots.figs["Flow picture"].canvas.isVisible():
+            return
+        self.movie.step(0.05 * float(self.speed.currentText().rstrip("×")))
 
     @staticmethod
     def _marks(ax, inl):

@@ -16,6 +16,7 @@ from PySide6 import QtCore, QtWidgets
 
 from ..cad import load_bodies, mesh_section, FILE_FILTER, UNITS
 from .common import PlotPanel
+from .speeds import draw_speeds
 from .electrode_view import ElectrodeView
 
 MM = 1e-3
@@ -87,7 +88,9 @@ class InstrumentTab(QtWidgets.QWidget):
         ov.addWidget(self.summary); ov.addWidget(self.make_btn)
         v.addWidget(out)
 
-        self.plots = PlotPanel(["Layout", "3D"])
+        self.plots = PlotPanel(["Layout", "3D", "Speeds"])
+        self.plots.hint("Speeds", "Run the models (F6 on the last one runs the chain) to see\n"
+                                  "the gas and ion speeds along the whole instrument here.")
         self.plots.hint("Layout", "Load a STEP of the whole instrument (Load STEP… on the left).")
         self.plots.hint("3D", "Load a STEP of the whole instrument (Load STEP… on the left).")
         self.view = ElectrodeView(self.plots.figs["Layout"].canvas, self._picked, self._hover)
@@ -345,6 +348,13 @@ class InstrumentTab(QtWidgets.QWidget):
         ax.set_xlabel("z (mm)"); ax.set_ylabel("x (mm)"); ax.set_zlabel("y (mm)")
         ax.set_title("Drag to turn; walls faint, tagged stages in their colour", fontsize=9)
         self.plots.draw("3D")
+
+    def show_speeds(self, rows):
+        """rows: [(stage name, speeds, offset in m)] from the workspace, in order along the ion path."""
+        if not rows:
+            return
+        draw_speeds(self.plots.fig("Speeds", show=False), rows)
+        self.plots.draw("Speeds")
 
     def redraw(self):
         self._draw(); self._draw_3d()

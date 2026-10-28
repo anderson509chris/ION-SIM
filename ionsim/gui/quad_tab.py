@@ -17,6 +17,7 @@ from .stage_picker import SourcePicker
 from .driver_store import get_store
 from .ion_table import IonTable, path_style, fate_caption, species_legend, species_stats, species_color
 from .traj3d import draw_traj3d
+from .speeds import ion_speeds
 
 MODES = ["Trajectories at (a, q)", "Trajectories at (U, V)", "Mass scan"]
 DRIVER_MODES = ["Trajectories at the ion m/z", "Transmission vs m/z (excitation scan)"]
@@ -547,6 +548,8 @@ class QuadTab(SimTab):
                                [[k, species[res.species[k]].name, species[res.species[k]].mz, species[res.species[k]].z,
                                  int(res.status[k]), res.t_end[k], *res.final_pos[k]] for k in range(len(res.status))])
             gas = out["gas"]
+            L = out["g"]["length"] * 1e-3
+            self.speeds = {"span": (0.0, L), "gas": None, "ions": ion_speeds(res, species, 0.0, L)}
             for note in res.notes:
                 self.log("  Entry: " + note)
             if res.cell is not None:

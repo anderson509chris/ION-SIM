@@ -1,7 +1,8 @@
 """Regenerate the app screenshots used in README.md.
 
 Run:  python docs/make_screenshots.py      (opens the window, runs every tab, ~2 min)
-      add --workspace to redo only the workspace and Instrument tab shots, --3d only the 3D path views
+      add --workspace to redo only the workspace and Instrument tab shots, --3d only the 3D path views,
+      --speeds only the chain run with the speed views
 """
 import os, sys, tempfile
 os.environ.setdefault("IONSIM_DRIVERS", os.path.join(tempfile.mkdtemp(), "drivers.json"))   # the default drivers
@@ -139,6 +140,12 @@ def workspace():
     cell.ctl.scroll.verticalScrollBar().setValue(cell.ctl.gas.y() - 6); settle()
     cell.plots.setCurrentIndex(list(cell.plots.figs).index("Trajectories")); settle()
     ws.grab().save(os.path.join(OUT, "quad_collision_cell.png")); print("saved quad_collision_cell")
+    ws.tabs.setCurrentWidget(ws.instrument); settle()
+    ws.instrument.plots.setCurrentIndex(list(ws.instrument.plots.figs).index("Speeds")); settle()
+    ws.grab().save(os.path.join(OUT, "instrument_speeds.png")); print("saved instrument_speeds")
+    ws.tabs.setCurrentWidget(inlet.ctl)
+    inlet.ctl.plots.setCurrentIndex(0); settle(60)                  # let the gas and ions move for a while
+    ws.grab().save(os.path.join(OUT, "inlet_flow_picture.png")); print("saved inlet_flow_picture")
     ws.tabs.setCurrentWidget(ws.home); settle()
     ws.grab().save(os.path.join(OUT, "workspace_add_model.png")); print("saved workspace_add_model")
     ws.close()
@@ -188,5 +195,11 @@ def only_workspace():
     app.quit()
 
 
-QtCore.QTimer.singleShot(500, only_workspace if "--workspace" in sys.argv else only_3d if "--3d" in sys.argv else go)
+def only_speeds():
+    workspace()
+    app.quit()
+
+
+QtCore.QTimer.singleShot(500, only_workspace if "--workspace" in sys.argv else only_3d if "--3d" in sys.argv
+                         else only_speeds if "--speeds" in sys.argv else go)
 app.exec()

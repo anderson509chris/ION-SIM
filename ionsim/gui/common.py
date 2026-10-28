@@ -53,6 +53,10 @@ class PlotPanel(QtWidgets.QTabWidget):
             self.figs[name] = fig
             self.hint(name, "Press Run to fill this plot.")
 
+    def add_controls(self, name, widget):
+        """Put a row of controls (a widget) above one plot, under its toolbar."""
+        self.widget(list(self.figs).index(name)).layout().insertWidget(1, widget)
+
     def hint(self, name, text):
         """Show what fills a plot until a run draws it (a plot is only drawn by the run modes that make it)."""
         f = self.figs[name]
@@ -144,6 +148,7 @@ class SimTab(QtWidgets.QWidget):
         self._thread = None
         self.last_table = None     # (header, rows) for CSV export
         self.exit_ions = None      # stages.ExitIons of the last run, for the next stage
+        self.speeds = None         # gas and ion speeds along the axis from the last run (speeds.py)
 
     def set_exit(self, ex):
         self.exit_ions = ex

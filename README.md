@@ -75,6 +75,7 @@ The app opens on **Home**, a start page listing every device. Each pick opens a 
 
   Each model reads the last run of the one before it, and the tab shows the link (*OA-TOF ← Collision cell*). **Run > Run with the stages before it** (F6) runs the whole chain in order.
 * **Instrument.** The Instrument tab starts from a CAD model of the whole system. **Load STEP…** reads every solid (chambers, capillary, funnel boards, rods, TOF plates; STL and OBJ work too) and draws them cut along the ion axis, from the side and from above, and in 3D. Click a part's outline (Ctrl or Shift click for more), pick what it is (a model, or *Chamber or wall*), give it a stage name and press **Tag**; parts with the same stage name are one model, such as both boards of a planar funnel. **Make linked models** then opens a tab per stage, named after it, in the order the stages sit along the ion path, each linked to the stage before it that can feed it. Load each stage's own detailed geometry in its tab (the planar funnel's DXF, for example) and run it alone or the whole chain with F6. The CAD model and its tags are saved with the setup. `examples/geometry/instrument.step` (made by `make_instrument_step.py`) is an inlet, planar funnel, interface, quadrupole and TOF pusher in two chambers to try it on.
+* **Speeds along the instrument.** After each run the Instrument tab's **Speeds** plot shows the gas speed (top) and the ions' speed along the axis (bottom, median of the recorded ions, per species) through every model that has run, laid end to end in chain order, or at their tagged places when the stages came from the CAD model. The inlet gives its gas and ion speeds, the funnel and Device builder their gas flow and ions, the quadrupole its ions (its gas is still).
 * **Setups.** **File > Save setup** (Ctrl+Shift+S) writes the whole workspace to one `.ionsetup` file: every model with all its settings and ion tables, which model feeds which, the drivers, and the geometry files the funnel and Device builder use (named relative to the setup, so keep them beside it or below it). **File > Open setup** (Ctrl+O) replaces the open models with the saved ones; **New setup** starts empty. When the app closes it keeps the setup for next time, so it opens on Home with everything as you left it. Results are not saved: run again (F6 for a chain). A saved driver that differs from your library's driver of the same name comes in as *name (from setup)*, and the setup's models use that one.
 * **Run** (F5) runs the model in front, **Stop** (Shift+F5) stops it.
 
@@ -87,6 +88,10 @@ Runs happen in the background. Every plot can be zoomed, panned and saved (**Fil
 | Instrument tab: parts tagged as stages (planar funnel selected) | The same instrument in 3D |
 |---|---|
 | ![Instrument layout](docs/screenshots/instrument_layout.png) | ![Instrument 3D](docs/screenshots/instrument_3d.png) |
+
+| Speeds along the instrument: inlet → funnel → collision cell |
+|---|
+| ![Instrument speeds](docs/screenshots/instrument_speeds.png) |
 
 **3D paths.** The quadrupole, ion funnel and Device builder tabs have a **3D** plot next to Trajectories: the recorded ion paths with the electrodes around them, which you can turn by dragging and zoom by right-dragging. The electrodes come from the solver grid, so it works for every geometry (rings, boards, rods and imported CAD); the front half (x < 0) is cut away so the ions inside stay in sight.
 
@@ -136,7 +141,13 @@ Planar cell (gap, length, gas speed and flow profile), waveform (bisinusoidal or
 
 ### ESI inlet capillary
 
-Spray region (emitter distance, tip radius, spray voltage, where ions leave the droplets), capillary (diameter, length, temperature), first vacuum stage (pressure, skimmer distance and voltage), and an editable ion table (m/z, z, K0). Plot tabs: Gas flow, Ion velocity, Ion energy and Effective temperature.
+Spray region (emitter distance, tip radius, spray voltage, where ions leave the droplets), capillary (diameter, length, temperature), first vacuum stage (pressure, skimmer distance and voltage), and an editable ion table (m/z, z, K0). Plot tabs: Flow picture, Gas flow, Ion velocity, Ion energy and Effective temperature.
+
+**Flow picture** shows the gas and the ions moving, from the emitter through the capillary into the first vacuum chamber, in three panels: the spray region, the capillary and the free jet with its barrel and Mach disk. The background is the gas speed; white dots are gas carried by the flow and coloured dots are the ions, one lane per species. The gas speeds up about ten-thousand-fold from the spray to the jet, so each panel plays at its own speed, written in its title (for example *1 s here = 52 µs* in the capillary). **Pause** and **Speed** are above the picture.
+
+| Flow picture: gas and ions from the spray into the vacuum chamber |
+|---|
+| ![Inlet flow picture](docs/screenshots/inlet_flow_picture.png) |
 
 | Ion energy | Gas flow |
 |---|---|
@@ -341,6 +352,7 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 * **Spray region:** a hyperbolic-tip field from the emitter, normalised to the spray voltage, and room air drawn into the capillary as a sink flow. Ions start already desolvated, a set distance downstream of the tip.
 * **Capillary:** compressible flow with wall friction (Fanno flow), choked at the exit, with the friction factor from the Reynolds number. The gas is taken to be at the capillary temperature from the entrance on.
 * **Free jet:** Ashkenas–Sherman centreline Mach number for an under-expanded sonic jet, up to the Mach disk at 0.67·D·√(P0/Pb).
+* **Flow picture (off the axis):** for the picture only, the axis results are spread across the flow. In the spray region the gas flows radially into the entrance (sink flow). In the capillary the 1D mean speed gets a parabolic profile (laminar) or a 1/7-power profile (turbulent), with the same mean. The jet flows radially from the exit, with the axis speed at the same distance, inside a barrel that widens to about 0.75·x_M across at the Mach disk; past it the subsonic core slows over a few x_M, and the background gas outside is still. The ions fly on the axis tables; they are drawn in lanes near the axis.
 * **Ions:** dv/dt = (u_gas − v)/τ + (q/m)E with τ = mK/q and K scaled with gas density. An exponential step keeps this stable from about 1 ns at 1 atm to the slow relaxation in the jet. A hard-sphere correction stops the drift growing linearly at high E/N. The outputs are speed, kinetic energy and the Wannier effective temperature, T_eff = T + M_gas (v − u)²/3k.
 
 ### Ion funnel (`ionsim/funnel.py`)
@@ -548,7 +560,8 @@ ION-SIM/
 │                           #   (the *_tab.py files, also the classic tabbed window), shared widgets,
 │                           #   device_tab.py and electrode_view.py (clickable electrodes),
 │                           #   drivers_tab.py, tof_tab.py, heating_view.py, ion_table.py (ion mixtures),
-│                           #   traj3d.py (3D ion paths with the electrodes)
+│                           #   traj3d.py (3D ion paths with the electrodes), flow_movie.py (moving inlet
+│                           #   picture), speeds.py (gas and ion speeds along the instrument)
 ├── examples/               # one demo per device; geometry/ has example STEP, DXF and .ionsim setups,
 │                           #   drivers/ has example .iondrv drivers
 ├── tests/smoke_test.py     # quick end-to-end check of imports, solves and the app window
