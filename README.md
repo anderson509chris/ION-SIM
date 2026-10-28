@@ -113,9 +113,9 @@ Rod geometry, RF frequency, ions, beam and operating point (a, q or U, V, kept i
 |---|
 | ![Collision cell](docs/screenshots/quad_collision_cell.png) |
 
-Under **Drive**, pick a driver from the Drivers tab instead of the built-in RF/DC, and choose which output goes on each rod (x+, x−, y+, y−). The tab then works out the excitation type from the tone signs on the rods: tones added with the RF (+ on one pair, − on the other) are quadrupolar and eject at twice the secular frequency; tones across one rod pair are dipolar and eject at the secular frequency. It lists the m/z each tone hits, and **Aim tone k at m/z** sets a tone's frequency for you. **Transmission vs m/z (excitation scan)** flies a log-spaced m/z range (plus every predicted notch) and plots the notches with the tone resonances marked (with 8 tones close together, their notches and weaker side resonances overlap into a broad rejection band, as in the example); the **Excitation** plot shows the secular frequencies against m/z with the tones drawn across them, so crossings are the ejected masses.
+Under **Drive**, pick a driver from the Drivers tab instead of the built-in RF/DC, and choose which output goes on each rod (x+, x−, y+, y−). The tab then works out the excitation type from the tone signs on the rods: tones added with the RF (+ on one pair, − on the other) are quadrupolar and eject at twice the secular frequency; tones across one rod pair are dipolar and eject at the secular frequency. It lists the m/z each tone hits, and **Aim tone k at m/z** sets a tone's frequency for you. **Transmission vs m/z (excitation scan)** flies a log-spaced m/z range (plus every predicted notch) and plots the notches with the tone resonances marked (the example aims 4 tones at light gas ions, H₂O⁺, N₂⁺, O₂⁺ and Ar⁺ at m/z 18, 28, 32 and 40, with 20 V RF at 1 MHz and a 1 eV beam, so each one is notched out while the masses between them pass); the **Excitation** plot shows the secular frequencies against m/z with the tones drawn across them, so crossings are the ejected masses.
 
-| Excitation scan with 8 tones on the RF | Tones against the secular frequencies |
+| Excitation scan with 4 tones on the RF | Tones against the secular frequencies |
 |---|---|
 | ![Quad excitation scan](docs/screenshots/quad_excitation_scan.png) | ![Quad excitation tones](docs/screenshots/quad_excitation_tones.png) |
 
@@ -231,7 +231,7 @@ The beam arrives along z through the pusher. A pulse on the pusher plate (and th
 
 ### Drivers
 
-The electronics, defined once and used everywhere. Start from a template (**TWAVE/RF combiner (16 outputs)**, **Quad RF + 8 tones** on the RF or dipolar on the x rods, **OA-TOF pusher and puller**, **RF pair**, **DC supply**, or empty), then edit:
+The electronics, defined once and used everywhere. Start from a template (**TWAVE/RF combiner (16 outputs)**, **Quad RF + 4 tones** on the RF or dipolar on the x rods, **OA-TOF pusher and puller**, **RF pair**, **DC supply**, or empty), then edit:
 
 * **RF, TWAVE and pulse timing:** RF frequency; number of TWAVE phases, how many are high at once, amplitude, speed at a reference pitch (the step time is pitch / speed) and the edge rise time; pulse rate, delay, width, rise and fall (10–90 %) and edge shape (linear or RC).
 * **Outputs:** name, DC, RF amplitude and phase (0 = RF+, 180 = RF−), which TWAVE phase it carries (blank for none), **Tones ×**: +1, −1 or 0, how the excitation tones are added to that output, and **Pulse**: the volts added while the pulse is high.
@@ -413,7 +413,7 @@ Everything is 1D along the axis, from the emitter to the skimmer.
 
 * **Waveform:** each output is V(t) = DC + RF cos(2πf t + φ) + (Tones ×) Σ A_k cos(2πf_k t + φ_k) + A_TW · gate_p(t) + A_pulse · pulse(t). Phase p's gate is high while ((p − step) mod N) < n_on, the step advances every pitch / speed, and each edge ramps linearly over the rise time.
 * **Imported waveforms (`ionsim/waveforms.py`, `ionsim/scope.py`):** a waveform is a sampled record v(t), linearly interpolated and repeated with its period. It adds Waveform × v(t) to its output and one field part per output that carries it, whose weight at time t is v(t). SPICE raw files are read directly (header, then float64 rows for ngspice, float64 time and float32 values for LTspice, absolute value of LTspice's negative compressed times, stepped runs split where time restarts). Rigol captures use `:WAV:PRE?` and `:WAV:DATA?`: volts = (code − y-origin − y-reference) · y-increment, t = (i − x-reference) · x-increment + x-origin.
-* **Field parts:** a device is solved once per distinct component: DC, cos and sin of each frequency in use, and each TWAVE phase of each driver. Outputs that share a component share its solve, so 16 outputs or 8 tones stay cheap. Electrodes not wired to a driver use the device's own RF and TWAVE settings as before.
+* **Field parts:** a device is solved once per distinct component: DC, cos and sin of each frequency in use, and each TWAVE phase of each driver. Outputs that share a component share its solve, so 16 outputs or several tones stay cheap. Electrodes not wired to a driver use the device's own RF and TWAVE settings as before.
 * **Quadrupole:** the rods are four separate electrodes, each driven by its output's waveform. For a/q the tab uses U = (DC_x − DC_y)/2 and V = |RF_x − RF_y|/2 (phasors, averaged over each rod pair). Secular frequencies come from the Floquet characteristic exponent β, f = β f_RF / 2, in x from (a, q) and in y from (−a, −q).
 
 ### Ion heating (`ionsim/heating.py`)

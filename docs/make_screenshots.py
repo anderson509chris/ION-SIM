@@ -42,16 +42,16 @@ def go():
     shot(w.quad, "Trajectories", "quad_trajectories")
     shot(w.quad, "Stability", "quad_stability")
     shot(w.quad, "3D", "quad_3d")
-    # quadrupole driven by the 8-tone driver: excitation scan
+    # quadrupole driven by the 4-tone driver: excitation scan over light gas ions (1 eV beam)
     q = w.quad
-    q.geom.set("div", 50)
-    q.drive.setCurrentText("Quad RF + 8 tones"); settle()
+    q.geom.set("div", 50); q.ion.set("energy", 1.0)
+    q.drive.setCurrentText("Quad RF + 4 tones"); settle()
     q.mode.setCurrentIndex(1)
-    q.dscan.set("m1", 150); q.dscan.set("m2", 2500); q.dscan.set("npts", 60); q.dscan.set("per", 20)
+    q.dscan.set("m1", 12); q.dscan.set("m2", 80); q.dscan.set("npts", 60); q.dscan.set("per", 20)
     run(q)
     shot(q, "Mass scan", "quad_excitation_scan")
     shot(q, "Excitation", "quad_excitation_tones")
-    q.drive.setCurrentIndex(0); q.geom.set("div", 80)
+    q.drive.setCurrentIndex(0); q.geom.set("div", 80); q.ion.set("energy", 5.0)
     # Drivers tab: the TWAVE/RF combiner
     dr = w.drivers
     w.tabs.setCurrentWidget(dr)

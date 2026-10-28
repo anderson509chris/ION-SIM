@@ -1,0 +1,72 @@
+{
+ "drivers": [
+  {
+   "name": "Quad RF + 4 tones",
+   "rf_freq": 1000000.0,
+   "outputs": [
+    {
+     "name": "Rods A (x)",
+     "dc": 0.0,
+     "rf": 20.0,
+     "rf_phase": 0.0,
+     "tw": -1,
+     "tone_sign": 1.0,
+     "pulse": 0.0,
+     "wave": "",
+     "wave_scale": 1.0
+    },
+    {
+     "name": "Rods B (y)",
+     "dc": 0.0,
+     "rf": 20.0,
+     "rf_phase": 180.0,
+     "tw": -1,
+     "tone_sign": -1.0,
+     "pulse": 0.0,
+     "wave": "",
+     "wave_scale": 1.0
+    }
+   ],
+   "tones": [
+    {
+     "freq": 529800.0,
+     "amp": 0.5,
+     "phase": 0.0,
+     "on": true
+    },
+    {
+     "freq": 316300.0,
+     "amp": 0.5,
+     "phase": 0.0,
+     "on": true
+    },
+    {
+     "freq": 274000.0,
+     "amp": 0.5,
+     "phase": 0.0,
+     "on": true
+    },
+    {
+     "freq": 216800.0,
+     "amp": 0.5,
+     "phase": 0.0,
+     "on": true
+    }
+   ],
+   "tw_phases": 8,
+   "tw_on": 4,
+   "tw_amp": 20.0,
+   "tw_speed": 200.0,
+   "tw_pitch": 0.000508,
+   "tw_rise": 0.0,
+   "notes": "Tones superimposed on the RF: + with RF+ on rods A, - with RF- on rods B. Tones aimed at m/z 18, 28, 32, 40 (H2O+, N2+, O2+, Ar+).",
+   "pulse_rate": 10000.0,
+   "pulse_delay": 0.0,
+   "pulse_width": 5e-06,
+   "pulse_rise": 1e-08,
+   "pulse_fall": 1e-08,
+   "pulse_shape": "linear",
+   "waves": []
+  }
+ ]
+}

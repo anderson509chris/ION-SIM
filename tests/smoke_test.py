@@ -121,13 +121,13 @@ check("driver wiring", not missing and sum(p.startswith("tw@") for p in parts) =
 from ionsim import quadrupole_rods, solve_basis, GridField2D, make_beam, Simulation
 g = quadrupole_rods(4e-3, dx=4e-3 / 40, split=True); basis = solve_basis(g)
 qd = quad_excitation()
-fx, _ = mathieu.secular_freqs(0, 300, 500, 4.03e-3, 1e6)
+fx, _ = mathieu.secular_freqs(0, qd.output("Rods A (x)").rf, 28, 4.03e-3, 1e6)
 T = []
-for amp in (0.0, 15.0):
+for amp in (0.0, 1.0):
     qd.tones = [Tone(2 * fx, amp)] if amp else []
     volts = {r: (lambda tt, o=o: float(qd.waveform(o, tt))) for r, o in
              (("x+", "Rods A (x)"), ("x-", "Rods A (x)"), ("y+", "Rods B (y)"), ("y-", "Rods B (y)"))}
-    ions = make_beam(20, 500, 1, 5.0, 0.3e-3, 1.0, birth_window=1e-6, rng=np.random.default_rng(0))
+    ions = make_beam(20, 28, 1, 1.0, 0.3e-3, 1.0, birth_window=1e-6, rng=np.random.default_rng(0))
     T.append(Simulation([GridField2D(g, basis, volts)], z_end=0.2).run(ions, 1 / 30e6, 3e-4).transmission)
 check("quad tone ejects its m/z", T[0] > 0.9 and T[1] < 0.2, f"no tone {T[0]:.0%}, tone at 2 f_sec {T[1]:.0%}")
 

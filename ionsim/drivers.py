@@ -20,7 +20,7 @@ waveform kept with the driver (waveforms.Trace): a SPICE simulation of the real 
 scope capture of the real board, interpolated between samples and repeated with its period.
 
 Because fields add linearly, a device is solved once per distinct component (DC, cos and
-sin of each frequency, each TWAVE phase), not once per output, so 8 tones on a quad or
+sin of each frequency, each TWAVE phase), not once per output, so tones on a quad or
 16 outputs on a TWAVE/RF combiner stay cheap (see components()).
 """
 import json
@@ -274,19 +274,23 @@ def twave_rf_combiner(name="TWAVE/RF combiner"):
                   notes="TWAVE phases 1-8 superimposed on RF+ and RF- (16 outputs).")
 
 
-def quad_excitation(name="Quad RF + 8 tones", dipolar=False):
-    """Quadrupole RF/DC with 8 excitation tones superimposed. Quadrupolar: tones follow the
-    RF (+ on rods A, - on rods B). Dipolar: tones across the x rod pair only."""
-    amp = 1.0 if dipolar else 5.0       # quadrupolar (parametric) excitation needs ~1-2% of the RF
-    tones = [Tone(freq=f, amp=amp) for f in (60e3, 80e3, 100e3, 120e3, 140e3, 160e3, 180e3, 200e3)]
+def quad_excitation(name="Quad RF + 4 tones", dipolar=False):
+    """Quadrupole RF/DC with 4 excitation tones superimposed, aimed at light gas ions (H2O+, N2+,
+    O2+, Ar+ at m/z 18, 28, 32, 40) with 20 V RF at 1 MHz on 4 mm rods. Quadrupolar: tones follow
+    the RF (+ on rods A, - on rods B) at twice the secular frequency. Dipolar: tones across the
+    x rod pair only, at the secular frequency."""
+    freqs = (529.8e3, 316.3e3, 274.0e3, 216.8e3)
     if dipolar:
-        outs = [Output("Rod x+", rf=300.0, tone_sign=1.0), Output("Rod x-", rf=300.0, tone_sign=-1.0),
-                Output("Rods y", rf=300.0, rf_phase=180.0)]
+        tones = [Tone(freq=f / 2, amp=0.2) for f in freqs]
+        outs = [Output("Rod x+", rf=20.0, tone_sign=1.0), Output("Rod x-", rf=20.0, tone_sign=-1.0),
+                Output("Rods y", rf=20.0, rf_phase=180.0)]
         note = "Dipolar excitation: tones on the x rods in antiphase, RF on all rods."
     else:
-        outs = [Output("Rods A (x)", rf=300.0, tone_sign=1.0),
-                Output("Rods B (y)", rf=300.0, rf_phase=180.0, tone_sign=-1.0)]
+        tones = [Tone(freq=f, amp=0.5) for f in freqs]       # quadrupolar (parametric) excitation needs ~2-3% of the RF
+        outs = [Output("Rods A (x)", rf=20.0, tone_sign=1.0),
+                Output("Rods B (y)", rf=20.0, rf_phase=180.0, tone_sign=-1.0)]
         note = "Tones superimposed on the RF: + with RF+ on rods A, - with RF- on rods B."
+    note += " Tones aimed at m/z 18, 28, 32, 40 (H2O+, N2+, O2+, Ar+)."
     return Driver(name, rf_freq=1.0e6, outputs=outs, tones=tones, notes=note)
 
 
@@ -308,8 +312,8 @@ def tof_pulser(name="OA-TOF pusher-puller"):
 
 TEMPLATES = {
     "TWAVE/RF combiner (16 outputs)": twave_rf_combiner,
-    "Quad RF + 8 tones (on the RF)": quad_excitation,
-    "Quad RF + 8 tones (dipolar, x rods)": lambda name="Quad dipolar": quad_excitation(name, dipolar=True),
+    "Quad RF + 4 tones (on the RF)": quad_excitation,
+    "Quad RF + 4 tones (dipolar, x rods)": lambda name="Quad dipolar": quad_excitation(name, dipolar=True),
     "RF pair (RF+ / RF-)": rf_pair,
     "OA-TOF pusher and puller": tof_pulser,
     "DC supply (8 channels)": dc_supply,
