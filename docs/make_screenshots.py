@@ -1,7 +1,7 @@
 """Regenerate the app screenshots used in README.md.
 
 Run:  python docs/make_screenshots.py      (opens the window, runs every tab, ~2 min)
-      add --workspace to redo only the workspace and Instrument tab shots
+      add --workspace to redo only the workspace and Instrument tab shots, --3d only the 3D path views
 """
 import os, sys, tempfile
 os.environ.setdefault("IONSIM_DRIVERS", os.path.join(tempfile.mkdtemp(), "drivers.json"))   # the default drivers
@@ -40,6 +40,7 @@ def go():
     run(w.quad)
     shot(w.quad, "Trajectories", "quad_trajectories")
     shot(w.quad, "Stability", "quad_stability")
+    shot(w.quad, "3D", "quad_3d")
     # quadrupole driven by the 8-tone driver: excitation scan
     q = w.quad
     q.geom.set("div", 50)
@@ -74,6 +75,7 @@ def go():
     w.funnel.flow.setCurrentIndex(2); w.funnel.space.set("I", 1.0)     # PCB rings, gas flow field, 1 nA beam
     run(w.funnel)
     shot(w.funnel, "Trajectories", "funnel_trajectories")
+    shot(w.funnel, "3D", "funnel_3d")
     shot(w.funnel, "Potential", "funnel_potential")
     shot(w.funnel, "Gas flow", "funnel_gas_flow")
     shot(w.funnel, "Heating", "funnel_heating")
@@ -92,6 +94,7 @@ def go():
     shot(d, "Geometry", "device_twave_board")
     run(d)
     shot(d, "Trajectories", "device_twave_trajectories")
+    shot(d, "3D", "device_twave_3d")
     d.open_setup_from(os.path.join(geo, "twave_board_combiner.ionsim"))
     run(d)
     shot(d, "Heating", "device_combiner_heating")
@@ -161,11 +164,29 @@ def instrument():
     ws.close()
 
 
+def only_3d():
+    run(w.quad)
+    shot(w.quad, "3D", "quad_3d")
+    w.funnel.flow.setCurrentIndex(2); w.funnel.space.set("I", 1.0)
+    run(w.funnel)
+    shot(w.funnel, "3D", "funnel_3d")
+    w.funnel.flow.setCurrentIndex(0); w.funnel.space.set("I", 0.0)
+    d = w.device
+    w.tabs.setCurrentWidget(d)
+    d.open_setup_from(os.path.join(os.path.dirname(__file__), "..", "examples", "geometry", "twave_board.ionsim"))
+    run(d)
+    shot(d, "3D", "device_twave_3d")
+    d.open_setup_from(os.path.join(os.path.dirname(__file__), "..", "examples", "geometry", "ring_funnel_profile.ionsim"))
+    run(d)
+    shot(d, "3D", "device_funnel_profile_3d")
+    app.quit()
+
+
 def only_workspace():
     instrument()
     workspace()
     app.quit()
 
 
-QtCore.QTimer.singleShot(500, only_workspace if "--workspace" in sys.argv else go)
+QtCore.QTimer.singleShot(500, only_workspace if "--workspace" in sys.argv else only_3d if "--3d" in sys.argv else go)
 app.exec()

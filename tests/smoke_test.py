@@ -282,4 +282,20 @@ it._make()
 check("instrument tab", len(it.bodies) == 11 and [m.name for m in ws5.models] == ["Inlet", "Planar funnel", "Cell", "OA-TOF"]
       and [ws5.source_of(m).name if ws5.source_of(m) else None for m in ws5.models] == [None, "Inlet", "Planar funnel", "Cell"],
       " → ".join(f"{m.name} {m.region[0]:.0f}-{m.region[1]:.0f} mm" for m in ws5.models))
+# 3D path view: a ring (axisymmetric) and a box (3D grid) come out as faces in the right place
+from matplotlib.figure import Figure
+from ionsim.axisym import AxisymGrid
+from ionsim.grid3d import Grid3D
+from ionsim.gui.traj3d import voxels, faces, draw_traj3d
+ga = AxisymGrid(5e-3, 0, 10e-3, 0.1e-3); ga.add_annulus("ring", 2e-3, 3e-3, 4e-3, 6e-3)
+va = faces(*voxels(ga))[0]
+rr = np.hypot(*va.mean(1)[:, 1:].T)                        # face centres
+gb = Grid3D((-3e-3, 3e-3, -3e-3, 3e-3, 0, 10e-3), 0.1e-3); gb.add_box("box", 1e-3, 2e-3, -1e-3, 1e-3, 2e-3, 8e-3)
+vb = faces(*voxels(gb))[0]
+fig3 = Figure()
+path3 = np.zeros((5, 2, 3)); path3[:, :, 2] = np.linspace(0, 9e-3, 5)[:, None]
+ax3 = draw_traj3d(fig3, path3, [("b", "-")] * 2, gb)
+check("3D path view", 1.6 < rr.min() < 2.2 and 2.8 < rr.max() < 3.5 and vb[..., 1].min() > 0.85 and vb[..., 1].max() < 2.2
+      and vb[..., 0].min() > 1.85 and vb[..., 0].max() < 8.15 and len(ax3.collections) == 1,
+      f"ring r {rr.min():.2f}-{rr.max():.2f} mm, box x {vb[..., 1].min():.2f}-{vb[..., 1].max():.2f} mm")
 print(f"all good in {time.time() - t0:.0f} s")

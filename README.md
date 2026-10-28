@@ -88,11 +88,19 @@ Runs happen in the background. Every plot can be zoomed, panned and saved (**Fil
 |---|---|
 | ![Instrument layout](docs/screenshots/instrument_layout.png) | ![Instrument 3D](docs/screenshots/instrument_3d.png) |
 
+**3D paths.** The quadrupole, ion funnel and Device builder tabs have a **3D** plot next to Trajectories: the recorded ion paths with the electrodes around them, which you can turn by dragging and zoom by right-dragging. The electrodes come from the solver grid, so it works for every geometry (rings, boards, rods and imported CAD); the front half (x < 0) is cut away so the ions inside stay in sight.
+
+| Ring funnel in 3D | Quadrupole in 3D |
+|---|---|
+| ![Funnel 3D](docs/screenshots/funnel_3d.png) | ![Quadrupole 3D](docs/screenshots/quad_3d.png) |
+| **TWAVE board in 3D (Device builder)** | **Ring profile in 3D (Device builder)** |
+| ![TWAVE board 3D](docs/screenshots/device_twave_3d.png) | ![Ring profile 3D](docs/screenshots/device_funnel_profile_3d.png) |
+
 **Ion mixtures.** The quadrupole, TWAVE, ion funnel and device builder tabs take their ions from an **Ions** table: one row per species (name, m/z, charge, K0, number of ions), with **Add** (copies the selected row) and **Remove**. All species fly together in one run. Trajectories are coloured by species (solid: transmitted, dotted: lost, dashed: still flying), arrival-time and exit plots split by species, and the results box and CSV give transmission, transit time and heating for each species. Where a tab needs one reference ion (the quadrupole's a/q operating point and mass scan, the funnel's m/z scan and RF effective-potential map), it uses the first row.
 
 ### Quadrupole mass filter
 
-Rod geometry, RF frequency, ions, beam and operating point (a, q or U, V, kept in sync, set for the first ion in the table). It runs either a single operating point, with every ion's own (a, q) marked on the stability diagram, or a full mass scan. Plot tabs: Potential, Trajectories, Cross-section, Stability, Mass scan and Excitation.
+Rod geometry, RF frequency, ions, beam and operating point (a, q or U, V, kept in sync, set for the first ion in the table). It runs either a single operating point, with every ion's own (a, q) marked on the stability diagram, or a full mass scan. Plot tabs: Potential, Trajectories, 3D, Cross-section, Stability, Mass scan and Excitation.
 
 **Collision gas** turns the rods into a collision cell or cooling quadrupole: pressure (0 = vacuum), gas (He, N₂, Ar), temperature, an **axial drag field** (V/cm) that pushes slowed ions through, and a max flight time. Each ion's cross section comes from its K0 in the ion table. The log gives, per species, the collisions per ion and the centre-of-mass energy of the first and hardest collision (the CID energy), and warns when steps are too long for the collision rate or ions are still in the rods at the end. Trajectory runs use the gas; mass and excitation scans fly in vacuum.
 
@@ -136,7 +144,7 @@ Spray region (emitter distance, tip radius, spray voltage, where ions leave the 
 
 ### Ion funnel
 
-Pick the funnel type at the top: **Ring funnel** (stacked PCBs), **Planar funnel** (two boards), or **Imported CAD**. Then set the electrics (RF amplitude and frequency, DC gradient, exit plate), gas and ions (the ion table, start radius). It runs either trajectories for every species in the table or transmission against m/z. Plot tabs: Geometry, Potential (DC, RF effective potential and space charge), Trajectories, Transmission, Exit beam and Gas flow. While the geometry stays the same, the solver is kept, so changing only voltages re-runs in about a second.
+Pick the funnel type at the top: **Ring funnel** (stacked PCBs), **Planar funnel** (two boards), or **Imported CAD**. Then set the electrics (RF amplitude and frequency, DC gradient, exit plate), gas and ions (the ion table, start radius). It runs either trajectories for every species in the table or transmission against m/z. Plot tabs: Geometry, Potential (DC, RF effective potential and space charge), Trajectories, 3D, Transmission, Exit beam and Gas flow. While the geometry stays the same, the solver is kept, so changing only voltages re-runs in about a second.
 
 * **PCB dielectric.** Ring funnel: each ring is a copper ring around the bore (**Copper ring width**, plated through both faces) on an FR4 board out to the plate diameter (**Board εr**, 4.4 for FR4). Set the width to 0 for all-metal plates. Planar funnel: the strips sit on **Board thickness** of FR4 (0 for strips in free space). Imported CAD: type a permittivity in a body's **Insulator εr** column to make it a board or spacer instead of an electrode. Insulators are drawn in tan, shape the field and stop ions, but carry no voltage.
 * **Gas flow.** *Still gas*, *Uniform axial speed*, or *Flow field from gas throughput*. The flow field takes the throughput in slm and an inlet disc on the entrance face (radius 0 = the entrance bore). It solves viscous flow through the open space, pumped out through every open side, and shows it on the **Gas flow** tab. In the ring funnel almost all the gas leaves between the rings, and about 0.2% reaches the exit.
@@ -539,7 +547,8 @@ ION-SIM/
 │                           # (whole-instrument CAD, parts tagged as stages), one controller per device
 │                           #   (the *_tab.py files, also the classic tabbed window), shared widgets,
 │                           #   device_tab.py and electrode_view.py (clickable electrodes),
-│                           #   drivers_tab.py, tof_tab.py, heating_view.py, ion_table.py (ion mixtures)
+│                           #   drivers_tab.py, tof_tab.py, heating_view.py, ion_table.py (ion mixtures),
+│                           #   traj3d.py (3D ion paths with the electrodes)
 ├── examples/               # one demo per device; geometry/ has example STEP, DXF and .ionsim setups,
 │                           #   drivers/ has example .iondrv drivers
 ├── tests/smoke_test.py     # quick end-to-end check of imports, solves and the app window

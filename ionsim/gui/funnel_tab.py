@@ -17,6 +17,7 @@ from .stage_picker import SourcePicker
 from .electrode_view import ElectrodeView, INSULATOR
 from .heating_view import HeatingBox, draw_heating
 from .ion_table import IonTable, species_color, path_style, fate_caption, species_legend, species_stats
+from .traj3d import draw_traj3d
 from ..ions import IonSpecies
 
 TYPES = ["Ring funnel (stacked PCBs)", "Planar funnel (two boards)", "Imported CAD (STEP / STL / OBJ)"]
@@ -36,8 +37,9 @@ def _entrance_bore(bodies, center):
 
 class FunnelTab(SimTab):
     def __init__(self, parent=None):
-        super().__init__(["Geometry", "Potential", "Trajectories", "Transmission", "Exit beam", "Gas flow", "Heating"], parent)
+        super().__init__(["Geometry", "Potential", "Trajectories", "3D", "Transmission", "Exit beam", "Gas flow", "Heating"], parent)
         self.plots.hint("Trajectories", "Set Run mode to “Trajectories” and press Run.")
+        self.plots.hint("3D", "Set Run mode to “Trajectories” and press Run.")
         self.plots.hint("Transmission", "Set Run mode to “Transmission vs m/z” and press Run.")
         self.plots.hint("Exit beam", "Set Run mode to “Trajectories” and press Run.")
         self.plots.hint("Gas flow", "Set Gas flow to “Flow field from gas throughput” and press Run.")
@@ -680,6 +682,11 @@ class FunnelTab(SimTab):
         species_legend(axes[0], out["species"], loc="upper right")
         axes[0].set_title(fate_caption(len(out["species"])) + "; dotted black: detector", fontsize=9)
         self.plots.draw("Trajectories")
+        if res.traj is not None:
+            styles = [path_style(res.status[i], res.species[i], len(out["species"])) for i in range(res.traj.shape[1])]
+            draw_traj3d(self.plots.fig("3D", show=False), res.traj, styles, out["grid"],
+                        fate_caption(len(out["species"])), z_end=out["z"][1])
+            self.plots.draw("3D")
 
     def _draw_exit(self, out):
         res = out["res"]

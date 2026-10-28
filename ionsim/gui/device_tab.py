@@ -18,6 +18,7 @@ from .funnel_tab import FLOWS
 from .driver_store import get_store
 from .heating_view import HeatingBox, draw_heating
 from .ion_table import IonTable, species_color, path_style, fate_caption, species_legend, species_stats
+from .traj3d import draw_traj3d
 from ..ions import IonSpecies
 
 MM = 1e-3
@@ -42,7 +43,7 @@ def examples_dir():
 
 class DeviceTab(SimTab):
     def __init__(self, parent=None, store=None):
-        super().__init__(["Geometry", "Potential", "Trajectories", "Results", "Gas flow", "Heating"], parent)
+        super().__init__(["Geometry", "Potential", "Trajectories", "3D", "Results", "Gas flow", "Heating"], parent)
         self.plots.hint("Gas flow", "Set Gas flow (section 7) to “Flow field from gas throughput” and press Solve and fly.")
         self.plots.hint("Heating", "Tick Ion heating (section 8) and press Solve and fly.")
         self.dev = None
@@ -883,6 +884,9 @@ class DeviceTab(SimTab):
             species_legend(axes[0], species, loc="upper right")
         fig.suptitle(fate_caption(len(species)), fontsize=9)
         self.plots.draw("Trajectories")
+        draw_traj3d(self.plots.fig("3D", show=False), res.traj, styles, getattr(fld.dg, "g", fld.dg), fate_caption(len(species)),
+                    z_end=info["z_end"])
+        self.plots.draw("3D")
 
     def _draw_results(self, res, info, species):
         fig = self.plots.fig("Results", show=False)

@@ -16,6 +16,7 @@ from .common import ParamForm, SimTab
 from .stage_picker import SourcePicker
 from .driver_store import get_store
 from .ion_table import IonTable, path_style, fate_caption, species_legend, species_stats, species_color
+from .traj3d import draw_traj3d
 
 MODES = ["Trajectories at (a, q)", "Trajectories at (U, V)", "Mass scan"]
 DRIVER_MODES = ["Trajectories at the ion m/z", "Transmission vs m/z (excitation scan)"]
@@ -25,7 +26,7 @@ BUILTIN = "Built-in RF/DC (set a, q or U, V below)"
 
 class QuadTab(SimTab):
     def __init__(self, parent=None, store=None):
-        super().__init__(["Potential", "Trajectories", "Cross-section", "Stability", "Mass scan", "Excitation"], parent)
+        super().__init__(["Potential", "Trajectories", "3D", "Cross-section", "Stability", "Mass scan", "Excitation"], parent)
         self.plots.hint("Mass scan", "Set Run mode to “Mass scan” and press Run.\n(With a driver picked under Drive: “Transmission vs m/z”.)")
         self.plots.hint("Excitation", "Pick a driver with excitation tones under Drive,\nset Run mode to “Transmission vs m/z (excitation scan)” and press Run.")
         self.store = store or get_store()
@@ -613,6 +614,10 @@ class QuadTab(SimTab):
         else:
             ax1.set_title(f"a = {out['a']:.4f}, q = {out['q']:.4f}, transmission {res.transmission:.0%}")
         self.plots.draw("Trajectories")
+        draw_traj3d(self.plots.fig("3D", show=False), res.traj,
+                    [path_style(res.status[k], res.species[k], len(species)) for k in range(res.traj.shape[1])],
+                    out["grid"], fate_caption(len(species)) + f"; transmission {res.transmission:.0%}")
+        self.plots.draw("3D")
 
         fig = self.plots.fig("Cross-section", show=False)
         ax = fig.add_subplot(111)
