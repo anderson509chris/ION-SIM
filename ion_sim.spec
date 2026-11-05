@@ -13,7 +13,8 @@ a = Analysis(
     ["ion_sim_app.py"],
     pathex=["."],
     binaries=gmsh_libs,
-    hiddenimports=["scipy.sparse.linalg", "matplotlib.backends.backend_qtagg", "gmsh", "ezdxf"]
+    hiddenimports=["scipy.sparse.linalg", "matplotlib.backends.backend_qtagg", "gmsh", "ezdxf",
+                   "PySide6.QtWebEngineWidgets", "PySide6.QtWebEngineCore"]
                   + collect_submodules("pyamg") + collect_submodules("trimesh.exchange")
                   + collect_submodules("ezdxf.path") + collect_submodules("ezdxf.entities")
                   + [m for m in ("pyvisa", "pyvisa_py") if importlib.util.find_spec(m)],
@@ -21,7 +22,9 @@ a = Analysis(
            if p.endswith((".dxf", ".step", ".ionsim"))]                         # sample files for the Device builder
           + [(p, "examples/drivers") for p in glob.glob("examples/drivers/*.iondrv")]    # sample drivers
           + [(p, "examples/spice") for p in glob.glob("examples/spice/*")]               # sample SPICE netlist and result
-          + [(p, "examples/scope") for p in glob.glob("examples/scope/*.csv")],          # sample scope capture
+          + [(p, "examples/scope") for p in glob.glob("examples/scope/*.csv")]           # sample scope capture
+          + [(p, "ionsim/gui/view3d") for p in glob.glob("ionsim/gui/view3d/*")
+             if p.endswith((".html", ".js", ".txt"))],                                  # the 3D viewer page and bundled three.js
     excludes=["tkinter", "PyQt5", "PyQt6", "IPython", "pytest"],
 )
 pyz = PYZ(a.pure)

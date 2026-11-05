@@ -3,6 +3,7 @@ import traceback
 from PySide6 import QtCore, QtWidgets
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from .view3d import make_widget as make_view3d
 
 
 class ParamForm(QtWidgets.QGroupBox):
@@ -42,13 +43,29 @@ class PlotPanel(QtWidgets.QTabWidget):
     def __init__(self, names, parent=None):
         super().__init__(parent)
         self.figs = {}
+        self.views3d = {}          # 3D plots that can also show the interactive viewer (view3d)
         for name in names:
             w = QtWidgets.QWidget()
             v = QtWidgets.QVBoxLayout(w)
             fig = Figure(figsize=(7, 5), layout="tight")
+            fig.scene3d = None
             canvas = FigureCanvasQTAgg(fig)
-            v.addWidget(NavigationToolbar2QT(canvas, w))
-            v.addWidget(canvas)
+            tb = NavigationToolbar2QT(canvas, w)
+            web = make_view3d() if "3D" in name.split() else None
+            if web is None:
+                v.addWidget(tb)
+                v.addWidget(canvas)
+            else:                  # the interactive viewer, with the matplotlib view one click away
+                mpl = QtWidgets.QWidget()
+                mv = QtWidgets.QVBoxLayout(mpl); mv.setContentsMargins(0, 0, 0, 0)
+                mv.addWidget(tb); mv.addWidget(canvas)
+                stack = QtWidgets.QStackedWidget()
+                stack.addWidget(web); stack.addWidget(mpl)
+                simple = QtWidgets.QCheckBox("Simple view (matplotlib)")
+                simple.toggled.connect(lambda on, s=stack: s.setCurrentIndex(1 if on else 0))
+                v.addWidget(simple)
+                v.addWidget(stack, 1)
+                self.views3d[name] = web
             self.addTab(w, name)
             self.figs[name] = fig
             self.hint(name, "Press Run to fill this plot.")
@@ -69,12 +86,16 @@ class PlotPanel(QtWidgets.QTabWidget):
     def fig(self, name, show=True):
         f = self.figs[name]
         f.clear()
+        f.scene3d = None           # a drawing function may attach a view3d.Scene for the viewer
         if show:
             self.setCurrentIndex(list(self.figs).index(name))
         return f
 
     def draw(self, name):
-        self.figs[name].canvas.draw_idle()
+        f = self.figs[name]
+        f.canvas.draw_idle()
+        if name in self.views3d and getattr(f, "scene3d", None) is not None:
+            self.views3d[name].show_scene(f.scene3d)
 
     def current_figure(self):
         return list(self.figs.values())[self.currentIndex()]

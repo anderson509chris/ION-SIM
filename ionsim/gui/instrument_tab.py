@@ -356,6 +356,17 @@ class InstrumentTab(QtWidgets.QWidget):
         ax.set_box_aspect((hi[2] - lo[2], hi[0] - lo[0], hi[1] - lo[1]))
         ax.set_xlabel("z (mm)"); ax.set_ylabel("x (mm)"); ax.set_zlabel("y (mm)")
         ax.set_title("Drag to turn; walls faint, tagged stages in their colour", fontsize=9)
+        try:                                       # the same model in the interactive viewer
+            from .view3d import Scene
+            sc = Scene(title="Instrument", subtitle="walls faint, tagged stages in their colour")
+            for name, t in self.bodies:
+                kind, _ = self.tags.get(name, (NONE, ""))
+                grp = "Walls" if kind == WALL else (str(kind) if kind != NONE else "Untagged parts")
+                sc.mesh(t / MM, color=col[name][:3], opacity=0.12 if kind == WALL else (0.85 if kind != NONE else 0.3),
+                        group=grp, metal=0.4, rough=0.5, edges="#8a93a3" if kind == WALL else None)
+            fig.scene3d = sc
+        except Exception:                          # noqa: BLE001 - the matplotlib view still works
+            fig.scene3d = None
         self.plots.draw("3D")
 
     def show_speeds(self, rows):

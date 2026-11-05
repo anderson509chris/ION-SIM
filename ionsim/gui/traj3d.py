@@ -146,4 +146,9 @@ def draw_traj3d(fig, traj, styles, grid=None, title="", cut=True, z_end=None):
     ax.view_init(elev=22, azim=-62)
     note = "drag to turn, right-drag to zoom" + ("; front half (x < 0) of the electrodes cut away" if cut and grid is not None else "")
     ax.set_title((title + "\n" if title else "") + note, fontsize=9)
+    try:                                                # the same picture for the interactive viewer
+        from .view3d import scene_from_traj
+        fig.scene3d = scene_from_traj(traj, styles, grid, title=title, z_end=z_end)
+    except Exception:                                   # noqa: BLE001 - the matplotlib view still works
+        fig.scene3d = None
     return ax

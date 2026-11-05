@@ -558,4 +558,16 @@ rows_s = ws3.speed_rows()
 check("speeds along the instrument", np.allclose(spd[0][2], 50) and np.allclose(spd[1][2], 20)
       and [r[0] for r in rows_s] == ["In", "F", "Q"] and abs(rows_s[1][2] - 0.073) < 1e-9 and abs(rows_s[2][2] - 0.178) < 1e-9,
       ", ".join(f"{r[0]} at {r[2] * 1e3:.0f} mm" for r in rows_s))
+# 3D viewer: a scene from recorded paths and a solver grid, written as one offline page
+from ionsim.gui.view3d import Scene, scene_from_traj, voltage_color
+from ionsim.grid3d import Grid3D as _G3
+g3v = _G3((-5e-3, 5e-3, -5e-3, 5e-3, 0, 10e-3), 0.5e-3)
+g3v.add_box("rod", 1e-3, 3e-3, -1e-3, 1e-3, 0, 10e-3)
+trv = np.zeros((30, 3, 3)); trv[:, :, 2] = np.linspace(0, 9e-3, 30)[:, None]
+trv[20:, 2] = np.nan
+scv = scene_from_traj(trv, [("tab:blue", "-"), ("tab:blue", "-"), ("tab:red", ":")], g3v, title="test")
+htmlv = scv.html()
+check("3D viewer scene", len(scv.d["objects"]) >= 1 and sorted(p["name"] for p in scv.d["paths"]) == ["lost (lost)", "transmitted"]
+      and "window.SCENE=" in htmlv and "three" in htmlv.lower() and voltage_color(-1e4) != voltage_color(1e4),
+      f"{len(scv.d['objects'])} electrode meshes, {len(htmlv) // 1024} kB page")
 print(f"all good in {time.time() - t0:.0f} s")

@@ -33,7 +33,7 @@ def run(tab):
 
 def shot(tab, plot, name):
     tab.plots.setCurrentIndex(list(tab.plots.figs).index(plot))
-    settle()
+    settle(250 if "3D" in plot.split() else 30)        # the 3D viewer page takes a few seconds to load
     w.grab().save(os.path.join(OUT, name + ".png"))
     print("saved", name)
 

@@ -1,0 +1,6 @@
+{
+  "name": "ionsim-view3d",
+  "private": true,
+  "description": "Builds ../viewer.js: the 3D viewer with three.js bundled in, so the pages work offline.",
+  "devDependencies": { "three": "0.169.0", "esbuild": "0.24.0" }
+}
