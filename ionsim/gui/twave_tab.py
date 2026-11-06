@@ -6,6 +6,8 @@ from ..twave import TWBoards, mobility, fly_mobility, mean_velocity_sine, fwhm
 from .common import ParamForm, SimTab
 from .heating_view import HeatingBox, draw_heating
 from .ion_table import IonTable, species_color
+from .scenes3d import twave_scene
+from .view3d import draw_simple
 from ..ions import IonSpecies
 
 MODES = ["Separation", "Wave-speed sweep", "Velocity vs theory"]
@@ -13,7 +15,8 @@ MODES = ["Separation", "Wave-speed sweep", "Velocity vs theory"]
 
 class TwaveTab(SimTab):
     def __init__(self, parent=None):
-        super().__init__(["TW field", "Arrival times", "Ion velocity", "Speed sweep", "Heating"], parent)
+        super().__init__(["TW field", "Arrival times", "3D", "Ion velocity", "Speed sweep", "Heating"], parent)
+        self.plots.hint("3D", "Set Run mode to “Separation” and press Run.")
         self.plots.hint("Arrival times", "Set Run mode to “Separation” and press Run.")
         self.plots.hint("Speed sweep", "Set Run mode to “Wave-speed sweep” and press Run.")
         self.plots.hint("Heating", "Set Run mode to “Separation”, tick Ion heating and press Run.")
@@ -102,13 +105,19 @@ class TwaveTab(SimTab):
         Ks = [mobility(k, g["p"], g["T"]) for k in k0s]
         heat_model = self.heat.model()
 
-        def separate(tw, path, counts, progress, heating=None):
+        snap = {}
+
+        def separate(tw, path, counts, progress, heating=None, record=False):
             sp = np.repeat(np.arange(len(Ks)), counts)
             K = np.asarray(Ks)[sp]
             z0 = np.random.default_rng().random(len(K)) * tw.wavelength
             v_slow = max(float(mean_velocity_sine(min(Ks) * tw.e_max, tw.speed)), 0.02 * tw.speed)
-            r = fly_mobility(tw, K, z0, path, dt, 3 * path / v_slow, g["T"], np.array([s.z for s in species])[sp], sp,
-                             progress=progress, heating=heating, mz=np.array([s.mz for s in species])[sp])
+            t_max = 3 * path / v_slow
+            r = fly_mobility(tw, K, z0, path, dt, t_max, g["T"], np.array([s.z for s in species])[sp], sp,
+                             progress=progress, heating=heating, mz=np.array([s.mz for s in species])[sp],
+                             record_every=max(1, int(t_max / dt / 600)) if record else 0)
+            if record and hasattr(r, "traj_t"):
+                snap.update(t=r.traj_t, z=r.traj_z, sp=sp, arrival=r.arrival)
             species_i = sp
             arr = [r.arrival[species_i == s] for s in range(len(Ks))]
             return (arr, r.heat, species_i) if heating is not None else arr
@@ -117,9 +126,10 @@ class TwaveTab(SimTab):
             out = {"mode": mode, "k0s": k0s, "names": names, "Ks": Ks, "tw": tw, "path": path}
             if mode == 0:
                 if heat_model is not None:
-                    out["t"], out["heat"], out["species"] = separate(tw, path, counts, progress, heat_model)
+                    out["t"], out["heat"], out["species"] = separate(tw, path, counts, progress, heat_model, record=True)
                 else:
-                    out["t"] = separate(tw, path, counts, progress)
+                    out["t"] = separate(tw, path, counts, progress, record=True)
+                out["snap"] = snap
             elif mode == 1:
                 speeds = np.linspace(sw["s0"], sw["s1"], int(sw["ns"]))
                 out["speeds"], out["sweep"] = speeds, []
@@ -184,6 +194,7 @@ class TwaveTab(SimTab):
             ax.set_title(f"{out['path']} m, {out['tw'].amplitude:.0f} V, {out['tw'].speed:.0f} m/s" +
                          (f", Rpp = {', '.join(f'{r:.2f}' for r in rpp)}" if rpp else ""))
             self.plots.draw("Arrival times")
+            self._draw_3d(out, means)
             self._draw_velocity(out, None)
             h = out.get("heat")
             if h is not None:
@@ -219,6 +230,19 @@ class TwaveTab(SimTab):
             self._draw_velocity(out, (out["cs"], out["v"]))
             self.last_table = (["c_over_s", "v_over_s"], [[c, v / out["tw"].speed] for c, v in zip(out["cs"], out["v"])])
             self.log("Velocity check done: points vs the analytic sine-wave curve on the Ion velocity tab")
+
+    def _draw_3d(self, out, means):
+        """The boards and where the ions are at six moments before the first species arrives."""
+        sn = out.get("snap") or {}
+        if "t" not in sn or not len(sn["t"]):
+            return
+        t_last = 0.95 * np.nanmin(means) if np.any(np.isfinite(means)) else sn["t"][-1]
+        times = np.linspace(t_last / 6, t_last, 6)
+        idx = np.unique(np.clip(np.searchsorted(sn["t"], times), 0, len(sn["t"]) - 1))
+        sc = twave_scene(out["tw"], sn["t"][idx], sn["z"][idx], sn["sp"], out["names"], out["path"],
+                         t_board=float(sn["t"][idx[-1]]))
+        draw_simple(self.plots.fig("3D", show=False), sc)
+        self.plots.draw("3D")
 
     def _draw_velocity(self, out, sim):
         tw = out["tw"]

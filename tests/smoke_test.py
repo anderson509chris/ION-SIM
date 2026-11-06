@@ -580,4 +580,27 @@ htmlv = scv.html()
 check("3D viewer scene", len(scv.d["objects"]) >= 1 and sorted(p["name"] for p in scv.d["paths"]) == ["lost (lost)", "transmitted"]
       and "window.SCENE=" in htmlv and "three" in htmlv.lower() and voltage_color(-1e4) != voltage_color(1e4),
       f"{len(scv.d['objects'])} electrode meshes, {len(htmlv) // 1024} kB page")
+# 3D views of the OA-TOF, FAIMS, TWAVE and inlet models: each builds a scene with parts and paths
+from ionsim.gui.scenes3d import tof_scene, faims_scene, twave_scene, inlet_scene
+from ionsim.gui.view3d import draw_simple
+from ionsim import tof as TT
+from ionsim.faims import Faims, cv_scan, DEFAULT_SPECIES as FSP
+from ionsim.twave import TWBoards, fly_mobility
+from matplotlib.figure import Figure
+tof_s, beam_s = TT.OATof(), TT.Beam()
+sc_t = tof_scene(tof_s, beam_s, TT.fly(tof_s, beam_s, [IonSpecies("a", 500, 1, 1.0, 30)], rng=np.random.default_rng(1), n_record=6))
+fa_s = Faims(length=5e-3, gas_velocity=20.0)
+r_f = cv_scan(fa_s, FSP[:1], [0.0], 5, 20, record=4, rng=np.random.default_rng(2))
+sc_f = faims_scene(fa_s, r_f, FSP[0].name, r_f.cv_theory[0])
+tw_s = TWBoards()
+r_w = fly_mobility(tw_s, np.full(40, 0.02), np.random.default_rng(3).random(40) * tw_s.wavelength, 0.01, 1e-7, 2e-3,
+                   record_every=20, rng=np.random.default_rng(3))
+sc_w = twave_scene(tw_s, r_w.traj_t[[2, 5]], r_w.traj_z[[2, 5]], np.zeros(40, int), ["a"], 0.01)
+sc_i = inlet_scene(inl_f, fly_inlet(inl_f, DEFAULT_IONS[:2]))
+scenes = {"OA-TOF": sc_t, "FAIMS": sc_f, "TWAVE": sc_w, "inlet": sc_i}
+for sc_ in scenes.values():
+    draw_simple(Figure(), sc_)
+check("3D views of every model", all(len(v.d["objects"]) >= 2 and len(v.d["paths"]) >= 1 and len(v.d["views"]) >= 4
+                                     and "window.SCENE=" in v.html() for v in scenes.values()),
+      ", ".join(f"{k} {len(v.d['objects'])} parts, {len(v.d['paths'])} path groups" for k, v in scenes.items()))
 print(f"all good in {time.time() - t0:.0f} s")

@@ -4,13 +4,16 @@ from PySide6 import QtWidgets
 
 from ..faims import Faims, FaimsSpecies, cv_scan, cv_theory, dispersion_curves, DEFAULT_SPECIES
 from .common import ParamForm, SimTab
+from .scenes3d import faims_scene
+from .view3d import draw_simple
 
 MODES = ["CV scan", "Dispersion plot (theory)"]
 
 
 class FaimsTab(SimTab):
     def __init__(self, parent=None):
-        super().__init__(["Waveform", "CV spectrum", "Ion paths", "Alpha", "Dispersion"], parent)
+        super().__init__(["Waveform", "CV spectrum", "Ion paths", "3D", "Alpha", "Dispersion"], parent)
+        self.plots.hint("3D", "Set Run mode to “CV scan” and press Run.")
         self.plots.hint("CV spectrum", "Set Run mode to “CV scan” and press Run.")
         self.plots.hint("Ion paths", "Set Run mode to “CV scan” and press Run.")
         self.plots.hint("Dispersion", "Set Run mode to “Dispersion plot (theory)” and press Run.")
@@ -167,6 +170,8 @@ class FaimsTab(SimTab):
                 ax.set_xlabel("x along cell (mm)"); ax.set_ylabel("y across gap (mm)")
                 ax.set_title(f"{sp[0].name} at its theoretical CV ({r.cv_theory[0]:.2f} V)")
                 self.plots.draw("Ion paths")
+                draw_simple(self.plots.fig("3D", show=False), faims_scene(f, r, sp[0].name, r.cv_theory[0]))
+                self.plots.draw("3D")
         else:
             fig = self.plots.fig("Dispersion")
             ax = fig.add_subplot(111)

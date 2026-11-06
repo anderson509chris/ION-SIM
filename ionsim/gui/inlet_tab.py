@@ -7,11 +7,13 @@ from ..ions import IonSpecies
 from ..stages import ExitGas
 from .common import ParamForm, SimTab
 from .flow_movie import FlowMovie
+from .scenes3d import inlet_scene
+from .view3d import draw_simple
 
 
 class InletTab(SimTab):
     def __init__(self, parent=None):
-        super().__init__(["Flow picture", "Gas flow", "Ion velocity", "Ion energy", "Effective temperature"], parent)
+        super().__init__(["Flow picture", "3D", "Gas flow", "Ion velocity", "Ion energy", "Effective temperature"], parent)
         self.movie = FlowMovie(self.plots.figs["Flow picture"])
         bar = QtWidgets.QWidget(); row = QtWidgets.QHBoxLayout(bar); row.setContentsMargins(0, 0, 0, 0)
         self.play = QtWidgets.QPushButton("Pause"); self.play.setCheckable(True)
@@ -23,6 +25,7 @@ class InletTab(SimTab):
         self.plots.add_controls("Flow picture", bar)
         self._timer = QtCore.QTimer(self); self._timer.setInterval(50)
         self._timer.timeout.connect(self._tick)
+        self.plots.hint("3D", "Press Run to see the spray, capillary, jet and skimmer with the ion paths.")
         self.plots.hint("Flow picture", "Press Run to see the gas and ions move from the spray into the vacuum chamber.")
         self.spray = ParamForm("ESI spray region", [
             ("gap", "Emitter to inlet", 5.0, 0.2, 50, 2, 0.5, "mm"),
@@ -148,6 +151,8 @@ class InletTab(SimTab):
             ax.set_xlabel("x (mm), 0 = capillary entrance"); ax.set_ylabel(lab)
             self._marks(ax, inl); ax.legend(fontsize=8)
             self.plots.draw(name)
+        draw_simple(self.plots.fig("3D", show=False), inlet_scene(inl, res))
+        self.plots.draw("3D")
         self.movie.show(inl, res)
         self.plots.setCurrentIndex(0)
         self._timer.start()

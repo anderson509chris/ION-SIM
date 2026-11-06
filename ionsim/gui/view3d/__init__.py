@@ -144,6 +144,109 @@ class Scene:
         return path
 
 
+# ---------------------------------------------------------------- building blocks
+def revolve(profile, n=48, axis="z"):
+    """Triangles of a solid of revolution about the z axis (or "x"): profile is a closed polygon
+    [(r, z), ...] in mm, r >= 0 (e.g. a tube wall: inner and outer radius between two z)."""
+    pr = np.asarray(profile, float)
+    pr = np.vstack([pr, pr[:1]]) if np.any(pr[0] != pr[-1]) else pr
+    ph = np.linspace(0, 2 * np.pi, n + 1)
+    c, s_ = np.cos(ph), np.sin(ph)
+    tris = []
+    for (r0, z0), (r1, z1) in zip(pr[:-1], pr[1:]):
+        a = np.stack([r0 * c[:-1], r0 * s_[:-1], np.full(n, z0)], 1)
+        b = np.stack([r0 * c[1:], r0 * s_[1:], np.full(n, z0)], 1)
+        cc = np.stack([r1 * c[1:], r1 * s_[1:], np.full(n, z1)], 1)
+        d = np.stack([r1 * c[:-1], r1 * s_[:-1], np.full(n, z1)], 1)
+        tris += [np.stack([a, b, cc], 1), np.stack([a, cc, d], 1)]
+    t = np.concatenate(tris) if tris else np.zeros((0, 3, 3))
+    return t[:, :, [2, 1, 0]] if axis == "x" else t
+
+
+def box_tris(x, y, z):
+    """The 12 triangles of an axis-aligned box (x, y, z are (lo, hi)), for merging many boxes into one mesh."""
+    (x0, x1), (y0, y1), (z0, z1) = x, y, z
+    v = np.array([[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+                  [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], float)
+    f = [(0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7), (0, 1, 5), (0, 5, 4),
+         (3, 7, 6), (3, 6, 2), (0, 4, 7), (0, 7, 3), (1, 2, 6), (1, 6, 5)]
+    return v[np.array(f)]
+
+
+def fit_view(lo, hi, direction, aspect=1.6, fov=30.0, margin=1.08):
+    """Camera (position, target) looking at the box lo..hi (mm) from `direction`, framed like the
+    viewer's own views (z right, y up)."""
+    lo, hi = np.asarray(lo, float), np.asarray(hi, float)
+    c = 0.5 * (lo + hi)
+    d = np.asarray(direction, float); d /= np.linalg.norm(d)
+    F = -d
+    R = np.cross(F, [0.0, 1.0, 0.0])
+    R = R / np.linalg.norm(R) if np.linalg.norm(R) > 1e-9 else np.array([0.0, 0.0, 1.0])
+    U = np.cross(R, F)
+    tv = np.tan(np.radians(fov / 2)); th = tv * aspect
+    dist = 1e-6
+    for x in (lo[0], hi[0]):
+        for y in (lo[1], hi[1]):
+            for z in (lo[2], hi[2]):
+                p = np.array([x, y, z]) - c
+                dist = max(dist, abs(p @ R) / th - p @ F, abs(p @ U) / tv - p @ F)
+    return c + d * dist * margin, c
+
+
+def _unb64(s, dim):
+    return np.frombuffer(base64.b64decode(s), np.float32).reshape(-1, dim).astype(float)
+
+
+def draw_simple(fig, sc, max_paths=40):
+    """A matplotlib picture of a Scene (paths and outlines), for when the viewer can't be shown.
+    Drawn like traj3d: z across, x into the page, y up."""
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+    fig.clear()
+    ax = fig.add_subplot(111, projection="3d", computed_zorder=False)
+    lo, hi = np.full(3, np.inf), np.full(3, -np.inf)
+
+    def grow(p):
+        nonlocal lo, hi
+        if len(p):
+            lo, hi = np.minimum(lo, p.min(0)), np.maximum(hi, p.max(0))
+
+    for o in sc.d["objects"]:
+        g = next((g for g in sc.d["groups"] if g["name"] == o["group"]), {})
+        if not g.get("visible", True):
+            continue
+        if o["type"] == "box":
+            t = box_tris(o["x"], o["y"], o["z"])
+        elif o["type"] == "mesh":
+            t = _unb64(o["tris"], 9).reshape(-1, 3, 3)
+            if len(t) > 6000:
+                t = t[:: int(np.ceil(len(t) / 6000))]
+        else:
+            continue
+        grow(t.reshape(-1, 3))
+        ax.add_collection3d(Poly3DCollection(t[:, :, [2, 0, 1]], facecolors=o["color"], edgecolors="none",
+                                             alpha=min(0.5, o["opacity"]), zorder=1))
+    for pg in sc.d["paths"]:
+        arr = _unb64(pg["pts"], pg["dim"])[:, -3:]
+        off = pg["off"]
+        step = max(1, (len(off) - 1) // max_paths)
+        for k in range(0, len(off) - 1, step):
+            p = arr[off[k]:off[k + 1]]
+            if len(p) > 1:
+                ax.plot(p[:, 2], p[:, 0], p[:, 1], lw=0.7, color=pg["color"] if pg["color"] != "time" else "tab:blue",
+                        zorder=5)
+                grow(p)
+    if np.all(np.isfinite(lo)):
+        span = np.maximum(hi - lo, 1e-6)
+        ax.set_box_aspect((1.0, max(span[0] / span[2], 0.15), max(span[1] / span[2], 0.15)))
+        ax.set_xlim(lo[2], hi[2]); ax.set_ylim(lo[0], hi[0]); ax.set_zlim(lo[1], hi[1])
+    ax.set_xlabel("z (mm)"); ax.set_ylabel("x (mm)"); ax.set_zlabel("y (mm)")
+    ax.view_init(elev=22, azim=-62)
+    if sc.d.get("title"):
+        ax.set_title(sc.d["title"] + (f"\n{sc.d['subtitle']}" if sc.d.get("subtitle") else ""), fontsize=9)
+    fig.scene3d = sc
+    return ax
+
+
 def _faces_xyz(ids, xe, ye, ze):
     from ..traj3d import faces
     verts, fid, _ = faces(ids, xe, ye, ze)            # plot order (z, x, y), mm

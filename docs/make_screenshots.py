@@ -68,12 +68,15 @@ def go():
     run(w.twave)
     shot(w.twave, "Arrival times", "twave_arrival_times")
     shot(w.twave, "TW field", "twave_field")
+    shot(w.twave, "3D", "twave_3d")
     run(w.faims)
     shot(w.faims, "CV spectrum", "faims_cv_spectrum")
     shot(w.faims, "Alpha", "faims_alpha")
+    shot(w.faims, "3D", "faims_3d")
     run(w.inlet)
     shot(w.inlet, "Ion energy", "inlet_ion_energy")
     shot(w.inlet, "Gas flow", "inlet_gas_flow")
+    shot(w.inlet, "3D", "inlet_3d")
     w.funnel.flow.setCurrentIndex(2); w.funnel.space.set("I", 1.0)     # PCB rings, gas flow field, 1 nA beam
     run(w.funnel)
     shot(w.funnel, "Trajectories", "funnel_trajectories")
@@ -108,6 +111,7 @@ def go():
     t.mode.setCurrentIndex(0)
     run(t)
     shot(t, "Layout", "tof_layout")
+    shot(t, "3D", "tof_3d")
     shot(t, "Mass spectrum", "tof_mass_spectrum")
     shot(t, "Peak width", "tof_peak_width")
     t.mode.setCurrentIndex(1); t.scan_param.setCurrentIndex(0); settle()
@@ -273,6 +277,9 @@ def only_3d():
     d.open_setup_from(os.path.join(os.path.dirname(__file__), "..", "examples", "geometry", "ring_funnel_profile.ionsim"))
     run(d)
     shot(d, "3D", "device_funnel_profile_3d")
+    for tab, name in ((w.twave, "twave_3d"), (w.faims, "faims_3d"), (w.inlet, "inlet_3d"), (w.tof, "tof_3d")):
+        run(tab)
+        shot(tab, "3D", name)
     app.quit()
 
 

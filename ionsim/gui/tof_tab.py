@@ -10,6 +10,8 @@ from .common import ParamForm, SimTab
 from .stage_picker import SourcePicker
 from .driver_store import get_store
 from .ion_table import IonTable, species_color, species_legend
+from .scenes3d import tof_scene
+from .view3d import draw_simple
 
 MODES = ["Single shot", "Scan a setting", "Tune reflectron for best resolution"]
 MANUAL = "Manual (set below)"
@@ -22,9 +24,10 @@ VOLTS = [("pusher", ("rest", "rest_pull", "push", "pull", "drift")), ("tube", ("
 
 class TofTab(SimTab):
     def __init__(self, parent=None, store=None):
-        super().__init__(["Layout", "Potentials", "Arrival times", "Mass spectrum", "Peak width", "Detector", "Scan"],
+        super().__init__(["Layout", "3D", "Potentials", "Arrival times", "Mass spectrum", "Peak width", "Detector", "Scan"],
                          parent)
         self.plots.hint("Arrival times", "Set Run mode to “Single shot” and press Run.")
+        self.plots.hint("3D", "Set Run mode to “Single shot” and press Run.")
         self.plots.hint("Mass spectrum", "Set Run mode to “Single shot” and press Run.")
         self.plots.hint("Peak width", "Set Run mode to “Single shot” and press Run:\n"
                                       "shows what sets the peak width of the first ion.")
@@ -482,6 +485,8 @@ class TofTab(SimTab):
             self.metrics.update({f"{s['name']} resolution": s["resolution"], f"{s['name']} flight time (µs)": s["t_mean"] * 1e6,
                                  f"{s['name']} peak FWHM (ns)": s["fwhm"] * 1e9, f"{s['name']} detected (%)": 100 * s["transmission"]})
         self._draw_layout(tof, beam, res)
+        draw_simple(self.plots.fig("3D", show=False), tof_scene(tof, beam, res))
+        self.plots.draw("3D")
         # arrival-time peaks, one panel per species
         fig = self.plots.fig("Arrival times", show=False)
         n = min(len(species), 6)
