@@ -180,6 +180,8 @@ class Workspace(QtWidgets.QMainWindow):
         act = r.addAction("Stop"); act.setShortcut("Shift+F5"); act.triggered.connect(self.stop_current)
         pm = self.menuBar().addMenu("&Models")
         pm.addAction("Load models folder…").triggered.connect(self.choose_plugin_folder)
+        self.remove_menu = pm.addMenu("Remove models folder")
+        self.remove_menu.aboutToShow.connect(lambda: self._fill_remove_menu(self.remove_menu))
         pm.addAction("Don't load my folders at start").triggered.connect(self.forget_plugin_folders)
         v = self.menuBar().addMenu("&View")
         v.addAction("Classic tabs window…").triggered.connect(self._classic)
@@ -566,7 +568,13 @@ class Workspace(QtWidgets.QMainWindow):
         self.plugin_label = QtWidgets.QLabel(""); self.plugin_label.setWordWrap(True)
         b = QtWidgets.QPushButton("Load models folder…"); b.clicked.connect(self.choose_plugin_folder)
         b.setToolTip("Your own models, kept in a folder of your own (they never need to be in this repository)")
-        self.plugin_row.addWidget(b); self.plugin_row.addWidget(self.plugin_label, 1)
+        self.plugin_row.addWidget(b)
+        self.remove_btn = QtWidgets.QPushButton("Remove folder")
+        self.remove_btn.setToolTip("Unload the models from one of your folders and stop loading it at start")
+        rm = QtWidgets.QMenu(self.remove_btn)
+        rm.aboutToShow.connect(lambda: self._fill_remove_menu(rm))
+        self.remove_btn.setMenu(rm)
+        self.plugin_row.addWidget(self.remove_btn); self.plugin_row.addWidget(self.plugin_label, 1)
         v.addSpacing(8); v.addLayout(self.plugin_row)
         v.addSpacing(16)
         self.open_title = QtWidgets.QLabel("Open models")
@@ -599,6 +607,7 @@ class Workspace(QtWidgets.QMainWindow):
             row += 1
         self.plugin_label.setText(("Models folders: " + "; ".join(self.plugin_folders)) if self.plugin_folders else
                                   "Keep your own models in a folder of yours and load it here.")
+        self.remove_btn.setVisible(bool(self.plugin_folders))
         if hasattr(self, "instrument"):
             self.instrument.set_templates(TEMPLATES)
 
@@ -610,7 +619,7 @@ class Workspace(QtWidgets.QMainWindow):
     def _load_plugins(self, folders, quiet=False):
         """Load the models in these folders (added to the ones loaded already). Returns [(file, error)]."""
         new = [os.path.abspath(f) for f in folders if os.path.abspath(f) not in self.plugin_folders]
-        models, errors = plugins.load_folders(new, taken=set(TEMPLATES))
+        models, errors = plugins.load_folders(new, taken=set(BUILTIN), loaded=PLUGIN_FILES)
         for name, (cls, desc, path) in models.items():
             TEMPLATES[name] = (cls, desc)
             PLUGIN_FILES[name] = path
@@ -646,6 +655,37 @@ class Workspace(QtWidgets.QMainWindow):
                                                        self.plugin_folders[-1] if self.plugin_folders else "")
         if f:
             self.load_plugin_folder(f)
+
+    def _fill_remove_menu(self, menu):
+        menu.clear()
+        for f in self.plugin_folders:
+            names = [k for k, p in PLUGIN_FILES.items() if os.path.realpath(p).startswith(os.path.realpath(f) + os.sep)]
+            act = menu.addAction(f + (f"  ({', '.join(names)})" if names else "  (no models)"))
+            act.triggered.connect(lambda _=False, f=f: self.remove_plugin_folder(f))
+        if not self.plugin_folders:
+            menu.addAction("No folders loaded").setEnabled(False)
+
+    def remove_plugin_folder(self, folder, ask=True):
+        """Unload the models that came from a folder, close their tabs and stop loading it at start."""
+        gone = plugins.unload_folder(folder, {k: p for k, p in PLUGIN_FILES.items()
+                                              if os.path.realpath(p).startswith(os.path.realpath(folder) + os.sep)})
+        open_ = [m for m in self.models if m.template in gone]
+        if ask and open_ and QtWidgets.QApplication.platformName() != "offscreen":
+            q = QtWidgets.QMessageBox.question(
+                self, APP_NAME, f"Close {', '.join(m.name for m in open_)}? Their settings and results are dropped.")
+            if q != QtWidgets.QMessageBox.Yes:
+                return []
+        for m in open_:
+            self._drop(m)
+        for k in gone:
+            TEMPLATES.pop(k, None); PLUGIN_FILES.pop(k, None)
+        self.plugin_folders = [f for f in self.plugin_folders if f != folder]
+        if self.persist:
+            self.settings.setValue("plugins/folders", "\n".join(self.plugin_folders))
+        self._fill_templates(); self._fill_open()
+        self.statusBar().showMessage(f"Removed {folder}" + (f" ({', '.join(gone)})" if gone else "") +
+                                     ". Restart the app before loading another copy of the same models.", 12000)
+        return gone
 
     def forget_plugin_folders(self):
         """Stop loading your folders at start (models already open stay until the app closes)."""

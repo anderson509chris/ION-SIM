@@ -317,7 +317,9 @@ MODELS = {"My device": (MyTab, "One line about it for the Home page.")}
 
 The plugin's own folder is on the import path, so it can import the helper modules next to it. It needs no path settings, because the app already has ION-SIM loaded. `examples/plugins/flight_time_plugin.py` is a complete small example to copy.
 
-A plugin that fails to load is reported, and never stops the app. A setup that uses a model whose folder isn't loaded opens without that model, with a note saying which folder to load. **Models > Don't load my folders at start** clears the list.
+A plugin that fails to load is reported, and never stops the app. A setup that uses a model whose folder isn't loaded opens without that model, with a note saying which folder to load.
+
+A plugin file reached through two loaded folders (a folder and its parent) loads once. If two folders hold copies of the same model, the first one loaded is kept and the other is skipped with a note naming both files. **Models > Remove models folder** (or **Remove folder** on Home) unloads a folder's models, closes their tabs and stops loading it at start; restart the app before loading another copy of the same models. **Models > Don't load my folders at start** clears the whole list.
 
 ### Ion heating
 

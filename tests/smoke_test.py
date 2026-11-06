@@ -1,7 +1,7 @@
 """Quick end-to-end check that an install works (about a minute). Run:
     python tests/smoke_test.py          (set QT_QPA_PLATFORM=offscreen on a headless machine)
 Exits non-zero with a message if anything is broken."""
-import os, sys, time, tempfile, json
+import os, sys, time, tempfile, json, shutil
 import numpy as np
 
 os.environ.setdefault("IONSIM_DRIVERS", os.path.join(tempfile.mkdtemp(), "drivers.json"))   # keep the user's driver library untouched
@@ -496,6 +496,16 @@ check("models from your folder", m7.ctl.metrics == {"value": 84.0} and len(ws7.p
       and "broken_plugin" in ws7.plugin_errors[0][0] and "Demo private model" in ws7.instrument.templates
       and [m.template for m in ws8.models] == ["Demo private model"] and any("Model nobody loaded" in n for n in notes7),
       f"loaded {list(TEMPLATES)[-1]!r}, broken plugin reported, setup note: {notes7[0][:40]}…")
+# the same plugin reached twice (a folder and its parent) loads once; a second copy elsewhere is skipped
+# with a note naming the first; removing a folder unloads its models and closes their tabs
+copy_dir = tempfile.mkdtemp()
+shutil.copytree(os.path.join(plug_dir, "mine"), os.path.join(copy_dir, "mine"))
+errs9 = ws7._load_plugins([os.path.join(plug_dir, "mine"), copy_dir], quiet=True)
+gone9 = ws7.remove_plugin_folder(plug_dir, ask=False)
+check("remove a models folder", len(errs9) == 1 and "already loaded from" in errs9[0][1] and copy_dir in errs9[0][0]
+      and gone9 == ["Demo private model"] and "Demo private model" not in TEMPLATES and m7 not in ws7.models
+      and plug_dir not in ws7.plugin_folders and os.path.join(plug_dir, "mine") in ws7.plugin_folders,
+      f"copy skipped ({errs9[0][1][:40]}…), removed {gone9}")
 # instrument tab: tag the parts of one STEP, get linked models in order along the ion path
 ws5 = Workspace(models=[], persist=False)
 it = ws5.instrument

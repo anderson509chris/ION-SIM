@@ -68,15 +68,23 @@ def load_file(path):
     return models
 
 
-def load_folders(folders, taken=()):
+def load_folders(folders, taken=(), loaded=None):
     """Load every plugin in the folders. Returns (models {name: (class, description, file)},
-    errors [(file, message)]). Names already in `taken` (the built-in models) are refused."""
+    errors [(file, message)]). Names already in `taken` (the built-in models) are refused.
+    loaded: {name: file} of the models loaded before; a plugin file that is already loaded (the same
+    file reached through two folders) is skipped quietly, and a second copy of a model is skipped
+    with a note saying where the first one came from."""
+    loaded = dict(loaded or {})
+    seen = {os.path.realpath(f) for f in loaded.values()}
     models, errors = {}, []
     for folder in folders:
         if not os.path.isdir(folder):
             errors.append((folder, "folder not found"))
             continue
         for path in plugin_files(folder):
+            if os.path.realpath(path) in seen:
+                continue
+            seen.add(os.path.realpath(path))
             try:
                 found = load_file(path)
             except BaseException as e:
@@ -84,8 +92,25 @@ def load_folders(folders, taken=()):
                 errors.append((path, f"{type(e).__name__}: {e}\n{tb}"))
                 continue
             for k, (cls, desc) in found.items():
-                if k in taken or k in models:
-                    errors.append((path, f"a model called '{k}' is already loaded; rename it"))
+                first = models[k][2] if k in models else loaded.get(k)
+                if first:
+                    errors.append((path, f"a model called '{k}' is already loaded from {first}, so this copy "
+                                         "was skipped. Remove one of the folders (Models > Remove models folder) "
+                                         "or rename the model"))
+                    continue
+                if k in taken:
+                    errors.append((path, f"'{k}' is the name of a built-in model; rename it"))
                     continue
                 models[k] = (cls, desc, path)
     return models, errors
+
+
+def unload_folder(folder, loaded):
+    """The models in `loaded` ({name: file}) that came from this folder, and take the folder off
+    the import path. The modules stay imported until the app restarts."""
+    root = os.path.realpath(folder)
+    gone = [k for k, f in loaded.items() if os.path.realpath(f).startswith(root + os.sep)]
+    for d in {os.path.dirname(os.path.abspath(loaded[k])) for k in gone}:
+        while d in sys.path:
+            sys.path.remove(d)
+    return gone
